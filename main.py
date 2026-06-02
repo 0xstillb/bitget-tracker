@@ -198,6 +198,15 @@ async def push_mt5(request: Request):
         _mt5["history_raw"] = data
     elif kind == "balance":
         _mt5["balance_raw"] = data
+    elif kind == "balance_sniff":
+        url = data.get("url", "")
+        payload = data.get("data", {})
+        logger.info("SNIFF url=%s data=%s", url, str(payload)[:300])
+        # Store latest sniff for inspection
+        if "balance_sniffs" not in _mt5:
+            _mt5["balance_sniffs"] = []
+        _mt5["balance_sniffs"].append({"url": url, "data": payload})
+        _mt5["balance_sniffs"] = _mt5["balance_sniffs"][-20:]  # keep last 20
 
     if _mt5["positions_raw"] is not None:
         _rebuild_summary()
@@ -242,6 +251,11 @@ async def get_mt5_debug():
         "parsed_count": len(parsed),
         "parsed": parsed,
     }
+
+
+@app.get("/api/mt5/sniffs")
+async def get_sniffs():
+    return _mt5.get("balance_sniffs", [])
 
 
 @app.get("/api/mt5/raw")

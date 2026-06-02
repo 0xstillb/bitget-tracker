@@ -51,10 +51,11 @@
         console.log('[Bitget Tracker] captured history');
         pushToTracker('history', data);
       }).catch(() => {});
-    } else if (url.includes('/v1/trace/mt5/account/balance')) {
+    } else if (url.includes('/v1/trace/mt5/')) {
+      // Sniff all other MT5 calls to find the balance endpoint
       promise.then(r => r.clone().json()).then(data => {
-        console.log('[Bitget Tracker] captured balance');
-        pushToTracker('balance', data);
+        console.log('[Bitget Tracker] UNKNOWN MT5:', url, JSON.stringify(data).slice(0, 300));
+        pushToTracker('balance_sniff', { url, data });
       }).catch(() => {});
     }
 
