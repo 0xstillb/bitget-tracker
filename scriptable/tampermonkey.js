@@ -51,11 +51,14 @@
         console.log('[Bitget Tracker] captured history');
         pushToTracker('history', data);
       }).catch(() => {});
-    } else if (url.includes('/v1/trace/mt5/')) {
-      // Sniff all other MT5 calls to find the balance endpoint
+    } else if (url.includes('/v1/trace/') || url.includes('/v1/copy/') || url.includes('/v1/mix/account') || url.includes('balance') || url.includes('equity') || url.includes('asset')) {
+      // Sniff broadly — the balance endpoint could be anywhere
       promise.then(r => r.clone().json()).then(data => {
-        console.log('[Bitget Tracker] UNKNOWN MT5:', url, JSON.stringify(data).slice(0, 300));
-        pushToTracker('balance_sniff', { url, data });
+        const snippet = JSON.stringify(data).slice(0, 400);
+        if (snippet.includes('1038') || snippet.includes('balance') || snippet.includes('equity') || snippet.includes('asset')) {
+          console.log('[Bitget Tracker] BALANCE SNIFF (fetch):', url, snippet);
+          pushToTracker('balance_sniff', { url, data });
+        }
       }).catch(() => {});
     }
 
@@ -80,6 +83,18 @@
           const kind = url.includes('tracePosition') ? 'positions' : 'history';
           console.log('[Bitget Tracker] XHR captured', kind);
           pushToTracker(kind, data);
+        } catch (_) {}
+      });
+    } else if (url.includes('/v1/')) {
+      // Sniff all other XHR calls for balance data
+      this.addEventListener('load', () => {
+        try {
+          const snippet = this.responseText.slice(0, 400);
+          if (snippet.includes('1038') || snippet.includes('balance') || snippet.includes('equity') || snippet.includes('asset')) {
+            const data = JSON.parse(this.responseText);
+            console.log('[Bitget Tracker] BALANCE SNIFF (XHR):', url, snippet);
+            pushToTracker('balance_sniff', { url, data });
+          }
         } catch (_) {}
       });
     }
@@ -123,15 +138,7 @@
       if (r.ok) { pushToTracker('history', await r.json()); console.log('[Bitget Tracker] history ok'); }
     } catch (e) { console.warn('[Bitget Tracker] history error:', e); }
 
-    // Balance
-    try {
-      const r = await fetch('/v1/trace/mt5/account/balance', {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (r.ok) { pushToTracker('balance', await r.json()); console.log('[Bitget Tracker] balance ok'); }
-    } catch (e) { console.warn('[Bitget Tracker] balance error:', e); }
+    // Balance is captured via intercept when Bitget fetches it naturally
   }
 
   // Start polling after page load
