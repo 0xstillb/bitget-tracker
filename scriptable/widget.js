@@ -17,7 +17,7 @@ if (!config.runsInWidget) {
   const prompt = new Alert();
   prompt.title = "Bitget Tracker Setup";
   prompt.message = "Enter your server URL (e.g. https://bitget-tracker.onrender.com)";
-  prompt.addTextField("Server URL", stored || "https://");
+  prompt.addTextField("Server URL", stored || "https://bitget-tracker.onrender.com");
   prompt.addAction("Save");
   prompt.addCancelAction("Cancel");
   const idx = await prompt.presentAlert();

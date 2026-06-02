@@ -23,8 +23,8 @@
   let TRACKER_URL = GM_getValue('tracker_url', '');
   if (!TRACKER_URL) {
     TRACKER_URL = prompt(
-      'Bitget Tracker Setup\n\nEnter your tracker URL:\n(local: http://localhost:8000)\n(Render: https://your-app.onrender.com)',
-      'http://localhost:8000'
+      'Bitget Tracker Setup\n\nEnter your tracker URL:',
+      'https://bitget-tracker.onrender.com'
     );
     if (TRACKER_URL) {
       TRACKER_URL = TRACKER_URL.replace(/\/$/, '');
