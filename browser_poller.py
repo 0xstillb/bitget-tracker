@@ -47,7 +47,7 @@ CHROMIUM_ARGS = [
     "--disable-accelerated-2d-canvas",
 ]
 
-BLOCKED_TYPES = {"image", "media", "font"}
+BLOCKED_TYPES = {"image", "media", "font", "stylesheet"}
 
 
 def _load_cookie_string() -> str:
@@ -161,13 +161,15 @@ async def _poll_once(push_fn: Callable, cookie_str: str):
                     await route.continue_()
             await page.route("**/*", _block)
 
-            # Intercept API responses during navigation
+            # Intercept ALL API responses during navigation
+            intercepted_urls = []
             async def on_response(response):
                 url = response.url
                 if "/v1/" not in url:
                     return
                 try:
                     data = await response.json()
+                    intercepted_urls.append(url.split("?")[0])
                     _classify_and_push(url, data, push_fn)
                 except Exception:
                     pass
@@ -181,29 +183,34 @@ async def _poll_once(push_fn: Callable, cookie_str: str):
             except Exception as e:
                 logger.warning("Navigation timeout (may still work): %s", e)
 
-            # Wait for React to render
-            await asyncio.sleep(8)
-
-            # Check login
-            text = await page.evaluate("document.body?.innerText?.slice(0, 500) || ''")
-            if "Log In" in text and "Sign Up" in text:
-                logger.error("Cookie expired — not logged in")
-                _status["last_error"] = "Cookie expired — paste a fresh cookie"
-                return
-
             _status["browser_alive"] = True
             _status["last_error"] = None
+            logger.info("Browser: intercepted %d API calls: %s", len(intercepted_urls), intercepted_urls)
 
             # Active API polls (fetch from within browser context)
             await _active_poll(page, push_fn)
 
-            # Scrape DOM for balance/equity
-            await _scrape_copy_details(page, push_fn)
-
-            # Click Balance history tab, wait, scrape again
-            await _click_tab(page, "Balance history")
-            await asyncio.sleep(3)
-            await _scrape_copy_details(page, push_fn)
+            # Try to fetch copy trading detail directly (balance source)
+            for ep in [
+                f"/v1/trace/mt5/trace/traceDetail?portfolioId={PORTFOLIO_ID}",
+                f"/v1/trace/mt5/data/copyDetail?portfolioId={PORTFOLIO_ID}",
+                f"/v1/trace/mt5/data/accountInfo?portfolioId={PORTFOLIO_ID}",
+            ]:
+                try:
+                    detail = await page.evaluate("""async (ep) => {
+                        const r = await fetch(ep, { credentials: 'include' });
+                        return r.ok ? await r.json() : null;
+                    }""", ep)
+                    if detail:
+                        d = detail.get("data", detail) if isinstance(detail, dict) else detail
+                        if isinstance(d, dict):
+                            has_bal = any(k for k in d if "balance" in k.lower() or "equity" in k.lower())
+                            if has_bal:
+                                logger.info("Browser: fetched balance from %s", ep)
+                                push_fn("copy_details", d)
+                                break
+                except Exception:
+                    pass
 
             logger.info("Poll cycle complete — closing browser")
 
