@@ -105,10 +105,7 @@
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
     const promise = _origFetch.apply(this, args);
 
-    if (url.includes('/v1/trace/') || url.includes('/v1/copy/')
-        || url.includes('/v1/mix/') || url.includes('balance')
-        || url.includes('equity') || url.includes('asset')
-        || url.includes('fund')) {
+    if (url.includes('/v1/')) {
       promise.then(r => r.clone().json()).then(data => {
         classifyAndPush(url, data);
       }).catch(() => {});
