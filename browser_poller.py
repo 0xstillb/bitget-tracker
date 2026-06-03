@@ -56,6 +56,7 @@ _status = {
     "last_error": None,
     "polls": 0,
     "scrapes": 0,
+    "last_page_text": None,
 }
 
 
@@ -161,7 +162,7 @@ async def _run_browser_session(push_fn: Callable, cookie_str: str):
         page = await context.new_page()
 
         # Block heavy resources to save memory
-        BLOCKED_TYPES = {"image", "media", "font", "stylesheet"}
+        BLOCKED_TYPES = {"image", "media", "font"}
         async def _block_resources(route):
             if route.request.resource_type in BLOCKED_TYPES:
                 await route.abort()
@@ -335,6 +336,13 @@ async def _active_poll(page, push_fn: Callable):
 
 
 async def _scrape_copy_details(page, push_fn: Callable):
+    try:
+        page_text = await page.evaluate("() => (document.body?.innerText || '').slice(0, 1000)")
+        _status["last_page_text"] = page_text
+        logger.info("Browser: page text preview: %s", page_text[:300])
+    except Exception as e:
+        logger.warning("Page text capture error: %s", e)
+
     try:
         details = await page.evaluate("""() => {
             const text = document.body?.innerText || '';
