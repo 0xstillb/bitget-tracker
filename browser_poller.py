@@ -47,7 +47,7 @@ CHROMIUM_ARGS = [
     "--disable-accelerated-2d-canvas",
 ]
 
-BLOCKED_TYPES = {"image", "media", "font", "stylesheet"}
+BLOCKED_TYPES = {"image", "media", "font"}
 
 
 def _load_cookie_string() -> str:
