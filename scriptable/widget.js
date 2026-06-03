@@ -1,7 +1,7 @@
 // SETUP: In Scriptable, run this script once manually first.
 // It will prompt you to enter your server URL (e.g. https://bitget-tracker.onrender.com)
 // and save it to Keychain automatically.
-// After setup, add a Medium-sized Scriptable widget to your home screen.
+// Supports: Medium (home screen) and accessoryRectangular (lock screen).
 
 const KEYCHAIN_KEY = "bitget_tracker_url";
 const GREEN  = new Color("#00c47a");
@@ -12,7 +12,7 @@ const MUTED  = new Color("#888888");
 const BG     = new Color("#111111");
 const SEP_C  = new Color("#333333");
 
-// ── First-run setup (only when running inside the app, not as a widget) ──
+// ── First-run setup ──
 if (!config.runsInWidget) {
   const stored = Keychain.contains(KEYCHAIN_KEY) ? Keychain.get(KEYCHAIN_KEY) : null;
   const prompt = new Alert();
@@ -27,23 +27,15 @@ if (!config.runsInWidget) {
     Keychain.set(KEYCHAIN_KEY, url);
     const done = new Alert();
     done.title = "Saved!";
-    done.message = `URL saved: ${url}\n\nNow add a Medium Scriptable widget to your home screen.`;
+    done.message = `URL saved: ${url}\n\nAdd a Medium widget (home) or Rectangular widget (lock screen).`;
     done.addAction("OK");
     await done.presentAlert();
-    Script.complete();
-    return;
-  } else {
-    Script.complete();
-    return;
   }
+  Script.complete();
+  return;
 }
 
-// ── Widget mode ──
-const widget = new ListWidget();
-widget.backgroundColor = BG;
-widget.setPadding(8, 10, 8, 10);
-widget.url = Keychain.contains(KEYCHAIN_KEY) ? Keychain.get(KEYCHAIN_KEY) : "";
-
+// ── Shared helpers ──
 async function fetchData(baseUrl) {
   const req = new Request(`${baseUrl}/api/widget`);
   req.timeoutInterval = 8;
@@ -67,7 +59,7 @@ function txt(stack, content, size, color, bold = false) {
 }
 
 function fmtUSD(n) {
-  if (n == null) return "$0.00";
+  if (n == null) return "$0";
   return "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
@@ -75,14 +67,21 @@ function fmtPnL(n) {
   return (n >= 0 ? "+" : "-") + fmtUSD(n);
 }
 
-// ── Build widget ──
+function fmtShort(n) {
+  if (n == null) return "$0";
+  const abs = Math.abs(n);
+  if (abs >= 1000) return (n >= 0 ? "+" : "-") + "$" + (abs / 1000).toFixed(1) + "k";
+  return (n >= 0 ? "+" : "-") + "$" + abs.toFixed(2);
+}
+
+// ── Fetch data ──
 if (!Keychain.contains(KEYCHAIN_KEY)) {
-  const row = widget.addStack();
-  const t = row.addText("⚙ Open Scriptable & run\nthis script to set up.");
+  const w = new ListWidget();
+  w.backgroundColor = BG;
+  const t = w.addText("⚙ Run script to set up");
   t.font = Font.systemFont(10);
   t.textColor = MUTED;
-  t.centerAlignText();
-  Script.setWidget(widget);
+  Script.setWidget(w);
   Script.complete();
   return;
 }
@@ -91,12 +90,12 @@ const baseUrl = Keychain.get(KEYCHAIN_KEY);
 const { data, stale } = await fetchData(baseUrl);
 
 if (!data) {
-  const row = widget.addStack();
-  const t = row.addText("⚠ No data\nCheck server");
+  const w = new ListWidget();
+  w.backgroundColor = BG;
+  const t = w.addText("⚠ No data");
   t.font = Font.boldSystemFont(11);
   t.textColor = AMBER;
-  t.centerAlignText();
-  Script.setWidget(widget);
+  Script.setWidget(w);
   Script.complete();
   return;
 }
@@ -110,10 +109,67 @@ const nPos   = data.open_positions ?? 0;
 const oPnl   = data.open_positions_pnl ?? 0;
 const allPnl = data.all_time_pnl ?? 0;
 const updAt  = data.updated_at ?? "--:--";
-
 const pnlColor = pnl >= 0 ? GREEN : RED;
 
-// ── Row 1: Header ──
+const family = config.widgetFamily;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOCK SCREEN — accessoryRectangular (small rectangle on lock screen)
+// ═══════════════════════════════════════════════════════════════════════════
+if (family === "accessoryRectangular") {
+  const w = new ListWidget();
+  w.setPadding(0, 0, 0, 0);
+
+  // Row 1: BITGET  balance
+  const r1 = w.addStack();
+  r1.layoutHorizontally();
+  r1.centerAlignContent();
+  txt(r1, "BG", 9, WHITE, true);
+  r1.addSpacer(3);
+  txt(r1, fmtUSD(bal), 9, WHITE);
+  r1.addSpacer();
+  if (stale) txt(r1, "⚠", 8, AMBER);
+
+  w.addSpacer(1);
+
+  // Row 2: Today PnL
+  const r2 = w.addStack();
+  r2.layoutHorizontally();
+  r2.centerAlignContent();
+  txt(r2, "Today", 8, MUTED);
+  r2.addSpacer(3);
+  txt(r2, fmtPnL(pnl), 10, pnlColor, true);
+  r2.addSpacer();
+  txt(r2, updAt, 8, MUTED);
+
+  w.addSpacer(1);
+
+  // Row 3: Open PnL | Pos | All-time
+  const r3 = w.addStack();
+  r3.layoutHorizontally();
+  r3.centerAlignContent();
+  const oPnlC = oPnl >= 0 ? GREEN : RED;
+  txt(r3, "Open " + fmtShort(oPnl), 8, oPnlC);
+  r3.addSpacer(4);
+  txt(r3, nPos + "pos", 8, WHITE);
+  r3.addSpacer(4);
+  const allC = allPnl >= 0 ? GREEN : RED;
+  txt(r3, "All " + fmtShort(allPnl), 8, allC);
+
+  Script.setWidget(w);
+  Script.complete();
+  return;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOME SCREEN — medium (default)
+// ═══════════════════════════════════════════════════════════════════════════
+const widget = new ListWidget();
+widget.backgroundColor = BG;
+widget.setPadding(8, 10, 8, 10);
+widget.url = baseUrl;
+
+// Row 1: Header
 const row1 = widget.addStack();
 row1.layoutHorizontally();
 row1.centerAlignContent();
@@ -126,7 +182,7 @@ txt(row1, updAt, 8, MUTED);
 
 widget.addSpacer(4);
 
-// ── Row 2: Balance & Investment side by side ──
+// Row 2: Balance & Investment
 const row2 = widget.addStack();
 row2.layoutHorizontally();
 
@@ -144,7 +200,7 @@ txt(invCol, fmtUSD(inv), 13, WHITE, true);
 
 widget.addSpacer(3);
 
-// ── Separator ──
+// Separator
 const sepRow = widget.addStack();
 const sep = sepRow.addText("───────────────────────");
 sep.font = Font.systemFont(5);
@@ -152,7 +208,7 @@ sep.textColor = SEP_C;
 
 widget.addSpacer(3);
 
-// ── Row 3: Daily PnL (big) ──
+// Row 3: Daily PnL
 const row3 = widget.addStack();
 row3.layoutHorizontally();
 row3.centerAlignContent();
@@ -163,7 +219,7 @@ row3.addSpacer();
 
 widget.addSpacer(2);
 
-// ── Row 4: Open PnL | Positions | All-time ──
+// Row 4: Open PnL | Positions | All-time
 const row4 = widget.addStack();
 row4.layoutHorizontally();
 
