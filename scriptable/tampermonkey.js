@@ -212,22 +212,26 @@
       pushToTracker('copy_details', { totalBalance: value, totalEquity: eq || value });
     }
 
-    // Scrape balance history table if visible
-    const rows = document.querySelectorAll('table tr, [class*="row"], [class*="item"]');
+    // Scrape balance history from full page text
     const historyRows = [];
-    rows.forEach(row => {
-      const cells = row.innerText.trim();
-      const addMatch = cells.match(/Add\s+([\d,]+\.?\d*)\s+USDT/i);
-      const outMatch = cells.match(/Transfer\s*out\s+([\d,]+\.?\d*)\s+USDT/i);
-      if (addMatch) {
-        historyRows.push({ type: 'Add', amount: parseFloat(addMatch[1].replace(/,/g, '')) });
-      } else if (outMatch) {
-        historyRows.push({ type: 'Transfer out', amount: parseFloat(outMatch[1].replace(/,/g, '')) });
-      }
-    });
+    // Match "Add" entries: look for "Add" followed by a number and "USDT"
+    const addMatches = text.matchAll(/\bAdd\b[\s\S]{0,30}?([\d,]+\.?\d+)\s*USDT/gi);
+    for (const m of addMatches) {
+      historyRows.push({ type: 'Add', amount: parseFloat(m[1].replace(/,/g, '')) });
+    }
+    // Match "Transfer out" entries
+    const outMatches = text.matchAll(/Transfer\s*out[\s\S]{0,30}?([\d,]+\.?\d+)\s*USDT/gi);
+    for (const m of outMatches) {
+      historyRows.push({ type: 'Transfer out', amount: parseFloat(m[1].replace(/,/g, '')) });
+    }
     if (historyRows.length > 0) {
       console.log('[Bitget Tracker] DOM scraped balance_history:', historyRows.length, 'rows');
       pushToTracker('balance_history', historyRows);
+    } else {
+      // Debug: send a snippet of the page text so we can see what's there
+      const snippet = text.slice(0, 2000);
+      console.log('[Bitget Tracker] No balance history found. Page text snippet:', snippet);
+      pushToTracker('balance_sniff', { url: 'DOM_SCRAPE_DEBUG', data: { pageTextSnippet: snippet } });
     }
   }
 
