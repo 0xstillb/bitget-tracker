@@ -81,7 +81,7 @@ async def _poll_once(push_fn: Callable, cookie_str: str):
         "Referer": f"https://www.bitget.com/copy-trading/mt5/follower/detail?portfolioId={PORTFOLIO_ID}",
         "Origin": "https://www.bitget.com",
     }
-    async with AsyncSession(impersonate=IMPERSONATE) as s:
+    async with AsyncSession(impersonate=IMPERSONATE, timeout=20) as s:
         _status["browser_alive"] = True
         await _active_poll(s, headers, push_fn)
         await _fetch_balance(s, headers, push_fn)

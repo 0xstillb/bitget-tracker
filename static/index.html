@@ -643,19 +643,23 @@
 
       if (!s.has_cookie) {
         dot.style.background = 'var(--amber)';
-        text.textContent = 'Browser: no cookie set';
+        text.textContent = 'Poller: no cookie set';
         last.textContent = 'tap to set up';
       } else if (s.last_error) {
         dot.style.background = 'var(--red)';
-        text.textContent = 'Browser: error';
-        last.textContent = s.last_error.slice(0, 50);
+        text.textContent = 'Poller: error — ' + s.last_error.slice(0, 40);
+        last.textContent = s.polls + ' polls';
       } else if (s.browser_alive) {
         dot.style.background = 'var(--green)';
-        text.textContent = 'Browser: live (' + s.polls + ' polls)';
+        text.textContent = 'Poller: running…';
+        last.textContent = s.polls + ' polls';
+      } else if (s.polls > 0) {
+        dot.style.background = 'var(--green)';
+        text.textContent = 'Poller: idle (' + s.polls + ' polls done)';
         last.textContent = s.last_poll ? 'Last: ' + s.last_poll.split(' ')[1] : '';
       } else {
         dot.style.background = 'var(--amber)';
-        text.textContent = 'Browser: starting...';
+        text.textContent = 'Poller: waiting for first poll…';
         last.textContent = '';
       }
     } catch (_) {}
