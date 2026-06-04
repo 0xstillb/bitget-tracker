@@ -155,23 +155,21 @@ async def _poll_once(push_fn: Callable, cookie_str: str):
 async def _active_poll(page, push_fn: Callable):
     logger.info("Polling APIs via page.evaluate...")
 
-    # ── Positions — probe /trace/ variants (follower-accessible) ─────────────
+    # ── Positions — probe with varied bodies on the 403 endpoint ─────────────
     pos_probes = []
-    for ep in [
-        "/v1/trace/mt5/trace/queryFollowPosition",
-        "/v1/trace/mt5/trace/followPosition",
-        "/v1/trace/mt5/trace/currentPosition",
-        "/v1/trace/mt5/trace/openPosition",
-        "/v1/trace/mt5/trace/holdingPosition",
-        "/v1/trace/mt5/trace/positionDetail",
+    for label, body in [
+        ("empty",          {}),
+        ("portfolioId",    {"portfolioId": PORTFOLIO_ID}),
+        ("followId",       {"followPortfolioId": PORTFOLIO_ID}),
+        ("userId",         {"userId": PORTFOLIO_ID}),
     ]:
         try:
-            result = await page.evaluate("""async ([ep, pid]) => {
+            result = await page.evaluate("""async ([body]) => {
                 try {
-                    const r = await fetch(ep, {
+                    const r = await fetch('/v1/trace/mt5/trace/getFollowOpenPosition', {
                         method: 'POST', credentials: 'include',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({portfolioId: pid}),
+                        body: JSON.stringify(body),
                     });
                     const text = await r.text();
                     if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
@@ -179,17 +177,16 @@ async def _active_poll(page, push_fn: Callable):
                     return {status: r.status, code: j?.code, msg: j?.msg,
                             data_keys: j?.data != null ? Object.keys(Object(j.data)).slice(0, 8) : null};
                 } catch(e) { return {status: 0, error: String(e)}; }
-            }""", [ep, PORTFOLIO_ID])
-            name = ep.split("/")[-1]
+            }""", [body])
             code = result.get("code") if isinstance(result, dict) else None
-            entry = {"ep": name, "status": result.get("status"), "code": code, "error": result.get("error"), "data_keys": result.get("data_keys")}
+            entry = {"body": label, "status": result.get("status"), "code": code, "error": result.get("error"), "data_keys": result.get("data_keys")}
             pos_probes.append(entry)
             if isinstance(result, dict) and result.get("status") == 200 and code in ("00000", "200", "0"):
-                logger.info("Positions found at %s code=%s keys=%s", ep, code, result.get("data_keys"))
+                logger.info("Positions found with body=%s code=%s keys=%s", label, code, result.get("data_keys"))
                 push_fn("positions", result.get("data") or {})
                 break
         except Exception as ex:
-            pos_probes.append({"ep": ep.split("/")[-1], "error": str(ex)})
+            pos_probes.append({"body": label, "error": str(ex)})
     _status["last_pos_response"] = pos_probes[0] if pos_probes else {}
     _status["last_pos_probes"] = pos_probes
 
