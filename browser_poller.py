@@ -155,57 +155,77 @@ async def _poll_once(push_fn: Callable, cookie_str: str):
 async def _active_poll(page, push_fn: Callable):
     logger.info("Polling APIs via page.evaluate...")
 
-    try:
-        pos = await page.evaluate("""async (pid) => {
-            try {
-                const r = await fetch('/v1/trace/mt5/data/tracePosition', {
-                    method: 'POST', credentials: 'include',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({portfolioId: pid}),
-                });
-                const j = await r.json();
-                return {status: r.status, data: j};
-            } catch(e) { return {status: 0, error: String(e)}; }
-        }""", PORTFOLIO_ID)
-        api_code = (pos.get("data") or {}).get("code")
-        api_msg  = (pos.get("data") or {}).get("msg")
-        pos_err  = pos.get("error")
-        logger.info("Positions: HTTP %s api_code=%s msg=%s err=%s", pos.get("status"), api_code, api_msg, pos_err)
-        _status["last_pos_response"] = {
-            "http": pos.get("status"), "code": api_code, "msg": api_msg,
-            "error": pos_err,
-            "data_preview": str(pos.get("data"))[:200] if pos.get("data") else None,
-        }
-        if pos.get("status") == 200 and api_code in ("00000", "200", "0"):
-            push_fn("positions", pos["data"])
-    except Exception as e:
-        logger.warning("Poll positions error: %s", e)
+    # ── Probe follower position endpoints ────────────────────────────────────
+    pos_probes = []
+    for ep in [
+        "/v1/trace/mt5/trace/getFollowOpenPosition",
+        "/v1/trace/mt5/trace/followOpenPosition",
+        "/v1/trace/mt5/trace/openPosition",
+        "/v1/trace/mt5/data/tracePosition",
+        "/v1/trace/mt5/trace/tracePosition",
+        "/v1/trace/mt5/trace/copyPosition",
+    ]:
+        try:
+            result = await page.evaluate("""async ([ep, pid]) => {
+                try {
+                    const r = await fetch(ep, {
+                        method: 'POST', credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({portfolioId: pid}),
+                    });
+                    const text = await r.text();
+                    if (text.trimStart().startsWith('<')) {
+                        return {status: r.status, error: 'html_redirect'};
+                    }
+                    const j = JSON.parse(text);
+                    return {status: r.status, code: j?.code, msg: j?.msg,
+                            data_keys: j?.data ? Object.keys(j.data).slice(0,8) : null};
+                } catch(e) { return {status: 0, error: String(e)}; }
+            }""", [ep, PORTFOLIO_ID])
+            name = ep.split("/")[-1]
+            pos_probes.append({"ep": name, **result})
+            if isinstance(result, dict) and result.get("status") == 200 and result.get("code") in ("00000", "200", "0"):
+                logger.info("Positions endpoint found: %s code=%s keys=%s", ep, result.get("code"), result.get("data_keys"))
+        except Exception as ex:
+            pos_probes.append({"ep": ep.split("/")[-1], "error": str(ex)})
+    _status["last_pos_probes"] = pos_probes
+    _status["last_pos_response"] = pos_probes[0] if pos_probes else {}
 
-    try:
-        hist = await page.evaluate("""async (pid) => {
-            try {
-                const r = await fetch('/v1/trace/mt5/trace/positionHistory', {
-                    method: 'POST', credentials: 'include',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({portfolioId: pid, pageNo: 1, pageSize: 50}),
-                });
-                const j = await r.json();
-                return {status: r.status, data: j};
-            } catch(e) { return {status: 0, error: String(e)}; }
-        }""", PORTFOLIO_ID)
-        api_code = (hist.get("data") or {}).get("code")
-        api_msg  = (hist.get("data") or {}).get("msg")
-        hist_err = hist.get("error")
-        logger.info("History: HTTP %s api_code=%s msg=%s err=%s", hist.get("status"), api_code, api_msg, hist_err)
-        _status["last_hist_response"] = {
-            "http": hist.get("status"), "code": api_code, "msg": api_msg,
-            "error": hist_err,
-            "data_preview": str(hist.get("data"))[:200] if hist.get("data") else None,
-        }
-        if hist.get("status") == 200 and api_code in ("00000", "200", "0"):
-            push_fn("history", hist["data"])
-    except Exception as e:
-        logger.warning("Poll history error: %s", e)
+    # ── Probe follower history endpoints ─────────────────────────────────────
+    hist_probes = []
+    for ep in [
+        "/v1/trace/mt5/trace/getFollowHistoryPosition",
+        "/v1/trace/mt5/trace/followHistoryPosition",
+        "/v1/trace/mt5/trace/historyPosition",
+        "/v1/trace/mt5/trace/positionHistory",
+        "/v1/trace/mt5/trace/followHistory",
+        "/v1/trace/mt5/trace/copyHistory",
+    ]:
+        try:
+            result = await page.evaluate("""async ([ep, pid]) => {
+                try {
+                    const r = await fetch(ep, {
+                        method: 'POST', credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({portfolioId: pid, pageNo: 1, pageSize: 20}),
+                    });
+                    const text = await r.text();
+                    if (text.trimStart().startsWith('<')) {
+                        return {status: r.status, error: 'html_redirect'};
+                    }
+                    const j = JSON.parse(text);
+                    return {status: r.status, code: j?.code, msg: j?.msg,
+                            data_keys: j?.data ? Object.keys(j.data).slice(0,8) : null};
+                } catch(e) { return {status: 0, error: String(e)}; }
+            }""", [ep, PORTFOLIO_ID])
+            name = ep.split("/")[-1]
+            hist_probes.append({"ep": name, **result})
+            if isinstance(result, dict) and result.get("status") == 200 and result.get("code") in ("00000", "200", "0"):
+                logger.info("History endpoint found: %s code=%s keys=%s", ep, result.get("code"), result.get("data_keys"))
+        except Exception as ex:
+            hist_probes.append({"ep": ep.split("/")[-1], "error": str(ex)})
+    _status["last_hist_response"] = hist_probes[0] if hist_probes else {}
+    _status["last_hist_probes"] = hist_probes
 
     bh_probes = []
     for ep in ["/v1/trace/mt5/trace/balanceHistory",
