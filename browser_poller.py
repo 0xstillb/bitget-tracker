@@ -234,61 +234,100 @@ async def _active_poll(page, push_fn: Callable):
 
 
 async def _fetch_balance(page, push_fn: Callable):
-    endpoints = [
-        ("/v1/trace/mt5/trace/traceDetail", True),
-        ("/v1/trace/mt5/data/copyDetail", True),
-        ("/v1/trace/mt5/data/accountInfo", True),
-        ("/v1/trace/mt5/account/balance", True),
-        ("/v1/trace/mt5/data/followerDetail", True),
-        ("/v1/trace/mt5/trace/followerDetail", True),
-    ]
-    _status["last_balance_probes"] = []
-    for ep, is_post in endpoints:
+    # Phase 1: broad scan across many candidate paths to find which exist
+    scan = await page.evaluate("""async (pid) => {
+        const candidates = [
+            ['/v1/trace/mt5/data/traceHome',      'POST'],
+            ['/v1/trace/mt5/trace/traceHome',      'POST'],
+            ['/v1/trace/mt5/data/overview',         'POST'],
+            ['/v1/trace/mt5/trace/overview',        'POST'],
+            ['/v1/trace/mt5/data/traderInfo',       'POST'],
+            ['/v1/trace/mt5/trace/traderInfo',      'POST'],
+            ['/v1/trace/mt5/data/traderDetail',     'POST'],
+            ['/v1/trace/mt5/trace/traderDetail',    'POST'],
+            ['/v1/trace/mt5/data/portfolioInfo',    'POST'],
+            ['/v1/trace/mt5/trace/portfolioInfo',   'POST'],
+            ['/v1/trace/mt5/data/profitInfo',       'POST'],
+            ['/v1/trace/mt5/trace/profitInfo',      'POST'],
+            ['/v1/trace/mt5/data/summary',          'POST'],
+            ['/v1/trace/mt5/trace/summary',         'POST'],
+            ['/v1/trace/mt5/data/traceAmount',      'POST'],
+            ['/v1/trace/mt5/trace/traceAmount',     'POST'],
+            ['/v1/trace/mt5/data/capitalInfo',      'POST'],
+            ['/v1/trace/mt5/trace/capitalInfo',     'POST'],
+            ['/v1/trace/mt5/data/tracePortfolio',   'POST'],
+            ['/v1/trace/mt5/trace/tracePortfolio',  'POST'],
+            ['/v1/trace/mt5/data/traceAnalysis',    'POST'],
+            ['/v1/trace/mt5/trace/traceAnalysis',   'POST'],
+            ['/v1/trace/mt5/data/profitSummary',    'POST'],
+            ['/v1/trace/mt5/trace/profitSummary',   'POST'],
+        ];
+        const out = {};
+        for (const [ep, method] of candidates) {
+            try {
+                const r = await fetch(ep, {
+                    method, credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({portfolioId: pid}),
+                });
+                const j = await r.json();
+                const d = j?.data;
+                out[ep.split('/').pop()] = {
+                    s: r.status, c: j?.code, msg: j?.msg,
+                    k: (d && typeof d==='object' && !Array.isArray(d)) ? Object.keys(d).slice(0,10) : null,
+                    sample: (d && typeof d==='object' && !Array.isArray(d))
+                        ? Object.fromEntries(Object.entries(d).slice(0,4).map(([k,v])=>[k,String(v).slice(0,40)]))
+                        : String(d).slice(0,80),
+                };
+            } catch(e) { out[ep.split('/').pop()] = {e: String(e).slice(0,40)}; }
+        }
+        return out;
+    }""", PORTFOLIO_ID)
+
+    _status["last_balance_probes"] = scan or {}
+    logger.info("Balance scan: %s", {k: v.get("s") for k, v in (scan or {}).items()})
+
+    # Phase 2: use any endpoint that returned success with data
+    _BAL_PATS = ("balance", "equity", "totalasset", "accountval", "worth", "asset",
+                 "capital", "amount", "profit", "pnl")
+    for ep_name, info in (scan or {}).items():
+        if info.get("s") != 200 or info.get("c") not in ("00000", "200", "0"):
+            continue
+        keys = info.get("k") or []
+        if not keys:
+            continue
+        # Fetch full data from this endpoint
         try:
-            result = await page.evaluate("""async ([ep, pid, isPost]) => {
+            full = await page.evaluate("""async ([ep, pid]) => {
                 try {
-                    const opts = {credentials: 'include'};
-                    if (isPost) {
-                        opts.method = 'POST';
-                        opts.headers = {'Content-Type': 'application/json'};
-                        opts.body = JSON.stringify({portfolioId: pid});
-                    }
-                    const r = await fetch(ep, opts);
-                    if (!r.ok) return {status: r.status};
+                    const r = await fetch(ep, {
+                        method: 'POST', credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({portfolioId: pid}),
+                    });
                     const j = await r.json();
-                    return {status: r.status, data: j};
-                } catch(e) { return {status: 0, error: String(e)}; }
-            }""", [ep, PORTFOLIO_ID, is_post])
-
-            short = ep.split("/")[-1]
-            if not result or result.get("status") != 200:
-                http = result.get("status") if result else 0
-                logger.info("Balance %s → HTTP %s", short, http)
-                _status["last_balance_probes"].append({"ep": short, "http": http})
-                continue
-
-            j = result.get("data") or {}
-            d = j.get("data", j) if isinstance(j, dict) else j
-            probe = {
-                "ep": short,
-                "http": result.get("status"),
-                "code": j.get("code") if isinstance(j, dict) else None,
-                "keys": list(d.keys()) if isinstance(d, dict) else type(d).__name__,
-                "sample": {k: str(v)[:40] for k, v in list(d.items())[:5]} if isinstance(d, dict) else str(d)[:100],
-            }
-            _status["last_balance_probes"].append(probe)
-
-            if isinstance(d, dict):
-                _BAL_PATS = ("balance", "equity", "totalasset", "accountval", "worth", "asset")
-                if any(any(pat in k.lower() for pat in _BAL_PATS) for k in d):
-                    logger.info("Found balance via %s", short)
-                    push_fn("copy_details", d)
-                    _status["last_scrape"] = datetime.now(BKK).strftime("%Y-%m-%d %H:%M:%S")
-                    _status["scrapes"] += 1
-                    return
-                logger.info("Balance %s → all keys: %s", short, list(d.keys()))
+                    return j?.data || null;
+                } catch(e) { return null; }
+            }""", [f"/v1/trace/mt5/data/{ep_name}", PORTFOLIO_ID])
+            if not full:
+                full = await page.evaluate("""async ([ep, pid]) => {
+                    try {
+                        const r = await fetch(ep, {
+                            method: 'POST', credentials: 'include',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({portfolioId: pid}),
+                        });
+                        const j = await r.json();
+                        return j?.data || null;
+                    } catch(e) { return null; }
+                }""", [f"/v1/trace/mt5/trace/{ep_name}", PORTFOLIO_ID])
+            if full and isinstance(full, dict):
+                logger.info("Using balance endpoint %s, keys: %s", ep_name, list(full.keys())[:8])
+                push_fn("copy_details", full)
+                _status["last_scrape"] = datetime.now(BKK).strftime("%Y-%m-%d %H:%M:%S")
+                _status["scrapes"] += 1
+                return
         except Exception as e:
-            logger.warning("Balance %s error: %s", ep.split("/")[-1], e)
-            _status["last_balance_probes"].append({"ep": ep.split("/")[-1], "error": str(e)})
+            logger.warning("Balance full-fetch %s error: %s", ep_name, e)
 
-    logger.warning("No balance endpoint found")
+    logger.warning("No balance endpoint found after scanning %d candidates", len(scan or {}))
