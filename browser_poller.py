@@ -292,71 +292,42 @@ async def _active_poll(page, push_fn: Callable):
 
 
 async def _fetch_balance(page, push_fn: Callable):
-    # Endpoints discovered via Proxyman interception of the Bitget app.
-    # traderView is 90KB and is the most likely to contain balance data.
-    endpoints = [
-        "/v1/trace/mt5/public/traderView",
-        "/v1/trace/mt5/trace/getTraceUserInfo",
-        "/v1/trace/mt5/trace/queryFrozen",
-        "/v1/trace/mt5/trader/getTraderApplyProgress",
-        "/v1/trace/mt5/trace/getFollowPortfolios",
-    ]
-    _status["last_balance_probes"] = {}
-    for ep in endpoints:
-        try:
-            result = await page.evaluate("""async ([ep, pid]) => {
-                try {
-                    const r = await fetch(ep, {
-                        method: 'POST', credentials: 'include',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({portfolioId: pid}),
-                    });
-                    const j = await r.json();
-                    const d = j?.data;
-                    return {
-                        status: r.status, code: j?.code, msg: j?.msg,
-                        keys: (d && typeof d==='object' && !Array.isArray(d))
-                            ? Object.keys(d).slice(0, 15) : null,
-                        sample: (d && typeof d==='object' && !Array.isArray(d))
-                            ? Object.fromEntries(Object.entries(d).slice(0,6).map(([k,v])=>[k,String(v).slice(0,50)]))
-                            : String(d).slice(0, 100),
-                    };
-                } catch(e) { return {status: 0, error: String(e)}; }
-            }""", [ep, PORTFOLIO_ID])
+    # getFollowPortfolios returns the follower's copy portfolio including balance,
+    # investment, equity and realizedPnl — confirmed via Proxyman capture.
+    try:
+        result = await page.evaluate("""async (pid) => {
+            try {
+                const r = await fetch('/v1/trace/mt5/trace/getFollowPortfolios', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({portfolioId: pid}),
+                });
+                const j = await r.json();
+                return {status: r.status, code: j?.code, data: j?.data};
+            } catch(e) { return {status: 0, error: String(e)}; }
+        }""", PORTFOLIO_ID)
 
-            short = ep.split("/")[-1]
-            _status["last_balance_probes"][short] = result
-            logger.info("Balance %s → HTTP %s code=%s", short, result.get("status"), result.get("code"))
+        code = result.get("code") if isinstance(result, dict) else None
+        _status["last_balance_probes"] = {"getFollowPortfolios": {
+            "http": result.get("status"), "code": code}}
 
-            if result.get("status") != 200 or result.get("code") not in ("00000", "200", "0"):
-                continue
-
-            keys = result.get("keys") or []
-            if not keys:
-                continue
-
-            # Re-fetch to get the full data object
-            full = await page.evaluate("""async ([ep, pid]) => {
-                try {
-                    const r = await fetch(ep, {
-                        method: 'POST', credentials: 'include',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({portfolioId: pid}),
-                    });
-                    const j = await r.json();
-                    return j?.data || null;
-                } catch(e) { return null; }
-            }""", [ep, PORTFOLIO_ID])
-
-            if full and isinstance(full, dict):
-                logger.info("Using balance from %s, keys: %s", short, list(full.keys())[:10])
-                push_fn("copy_details", full)
+        if result.get("status") == 200 and code in ("00000", "200", "0"):
+            data = result.get("data") or {}
+            details = data.get("portfolioDetails") or []
+            if details and isinstance(details[0], dict):
+                portfolio = details[0]
+                logger.info("getFollowPortfolios OK: balance=%s investment=%s",
+                            portfolio.get("balance"), portfolio.get("totalInvestment"))
+                push_fn("copy_details", portfolio)
                 _status["last_scrape"] = datetime.now(BKK).strftime("%Y-%m-%d %H:%M:%S")
                 _status["scrapes"] += 1
                 return
+            logger.warning("getFollowPortfolios: no portfolioDetails in response")
+        else:
+            logger.warning("getFollowPortfolios failed: http=%s code=%s",
+                           result.get("status"), code)
+    except Exception as e:
+        logger.warning("getFollowPortfolios error: %s", e)
+        _status["last_balance_probes"] = {"getFollowPortfolios": {"error": str(e)}}
 
-        except Exception as e:
-            logger.warning("Balance %s error: %s", ep.split("/")[-1], e)
-            _status["last_balance_probes"][ep.split("/")[-1]] = {"error": str(e)}
-
-    logger.warning("No balance endpoint matched")
+    logger.warning("Balance fetch failed")

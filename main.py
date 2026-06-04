@@ -63,6 +63,16 @@ def _push_data(kind: str, data):
                         changed = True
                     except (TypeError, ValueError):
                         pass
+            for key in ("totalInvestment", "total_investment", "investment"):
+                if key in data:
+                    try:
+                        val = round(float(data[key]), 2)
+                        if val > 0:
+                            _settings["investment"] = val
+                            changed = True
+                            logger.info("Auto-updated investment=%.2f from key=%s", val, key)
+                    except (TypeError, ValueError):
+                        pass
             if changed:
                 _save_settings(_settings)
     elif kind == "balance_history":
