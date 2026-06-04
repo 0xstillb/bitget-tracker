@@ -242,6 +242,7 @@ async def _fetch_balance(page, push_fn: Callable):
         ("/v1/trace/mt5/data/followerDetail", True),
         ("/v1/trace/mt5/trace/followerDetail", True),
     ]
+    _status["last_balance_probes"] = []
     for ep, is_post in endpoints:
         try:
             result = await page.evaluate("""async ([ep, pid, isPost]) => {
@@ -259,22 +260,35 @@ async def _fetch_balance(page, push_fn: Callable):
                 } catch(e) { return {status: 0, error: String(e)}; }
             }""", [ep, PORTFOLIO_ID, is_post])
 
+            short = ep.split("/")[-1]
             if not result or result.get("status") != 200:
-                logger.info("Balance %s → HTTP %s", ep.split("/")[-1], result.get("status") if result else 0)
+                http = result.get("status") if result else 0
+                logger.info("Balance %s → HTTP %s", short, http)
+                _status["last_balance_probes"].append({"ep": short, "http": http})
                 continue
 
             j = result.get("data") or {}
             d = j.get("data", j) if isinstance(j, dict) else j
+            probe = {
+                "ep": short,
+                "http": result.get("status"),
+                "code": j.get("code") if isinstance(j, dict) else None,
+                "keys": list(d.keys()) if isinstance(d, dict) else type(d).__name__,
+                "sample": {k: str(v)[:40] for k, v in list(d.items())[:5]} if isinstance(d, dict) else str(d)[:100],
+            }
+            _status["last_balance_probes"].append(probe)
+
             if isinstance(d, dict):
                 _BAL_PATS = ("balance", "equity", "totalasset", "accountval", "worth", "asset")
                 if any(any(pat in k.lower() for pat in _BAL_PATS) for k in d):
-                    logger.info("Found balance via %s", ep.split("/")[-1])
+                    logger.info("Found balance via %s", short)
                     push_fn("copy_details", d)
                     _status["last_scrape"] = datetime.now(BKK).strftime("%Y-%m-%d %H:%M:%S")
                     _status["scrapes"] += 1
                     return
-                logger.info("Balance %s → all keys: %s", ep.split("/")[-1], list(d.keys()))
+                logger.info("Balance %s → all keys: %s", short, list(d.keys()))
         except Exception as e:
             logger.warning("Balance %s error: %s", ep.split("/")[-1], e)
+            _status["last_balance_probes"].append({"ep": ep.split("/")[-1], "error": str(e)})
 
     logger.warning("No balance endpoint found")
