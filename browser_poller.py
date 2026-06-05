@@ -255,7 +255,9 @@ async def _fetch_balance(page, push_fn: Callable):
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({}),
                 });
-                const j = await r.json();
+                const text = await r.text();
+                if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
+                const j = JSON.parse(text);
                 return {status: r.status, code: j?.code, data: j?.data};
             } catch(e) { return {status: 0, error: String(e)}; }
         }""")
@@ -302,7 +304,9 @@ async def _fetch_balance(page, push_fn: Callable):
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({portfolioId: pid}),
                     });
-                    const j = await r.json();
+                    const text = await r.text();
+                    if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
+                    const j = JSON.parse(text);
                     return {status: r.status, code: j?.code, data: j?.data};
                 } catch(e) { return {status: 0, error: String(e)}; }
             }""", pid)
