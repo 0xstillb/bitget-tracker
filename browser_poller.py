@@ -295,31 +295,36 @@ async def _poll_cfd_history(page, push_fn: Callable, trader_name: str, pid: str)
 
 
 async def _poll_futures_history(page, push_fn: Callable, trader_name: str, pid: str):
+    # (method, endpoint, params)
     probes = [
-        ("/v1/trace/future/trace/positionHistory",
+        ("POST", "/v1/trace/future/trace/positionHistory",
          {"portfolioId": pid, "pageNo": 1, "pageSize": 50}),
-        ("/api/v2/copy/mix-follower/history-orders",
+        ("GET",  "/api/v2/copy/mix-follower/history-orders",
          {"portfolioId": pid, "pageNo": "1", "pageSize": "50"}),
-        ("/v1/copy/futures/follow/closePosition/list",
+        ("POST", "/v1/copy/futures/follow/closePosition/list",
          {"portfolioId": pid, "pageNo": 1, "pageSize": 50}),
     ]
     results = []
-    for ep, body in probes:
+    for method, ep, params in probes:
         try:
-            result = await page.evaluate("""async ([ep, body]) => {
+            result = await page.evaluate("""async ([method, ep, params]) => {
                 try {
-                    const r = await fetch(ep, {
-                        method: 'POST', credentials: 'include',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(body),
-                    });
+                    let url = ep;
+                    let opts = {method, credentials: 'include', headers: {}};
+                    if (method === 'GET') {
+                        url = ep + '?' + new URLSearchParams(params).toString();
+                    } else {
+                        opts.headers['Content-Type'] = 'application/json';
+                        opts.body = JSON.stringify(params);
+                    }
+                    const r = await fetch(url, opts);
                     const text = await r.text();
                     if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
                     const j = JSON.parse(text);
                     return {status: r.status, code: j?.code, msg: j?.msg, data: j?.data,
-                            data_keys: j?.data ? Object.keys(Object(j.data)).slice(0,8) : null};
+                            data_keys: j?.data != null ? Object.keys(Object(j.data)).slice(0,8) : null};
                 } catch(e) { return {status: 0, error: String(e)}; }
-            }""", [ep, body])
+            }""", [method, ep, params])
             code = result.get("code") if isinstance(result, dict) else None
             ep_short = ep.split("/")[-1]
             logger.info("Futures history[%s] %s: HTTP %s code=%s keys=%s err=%s",
@@ -439,32 +444,43 @@ async def _fetch_cfd_balances(page, push_fn: Callable, cfd_traders: dict):
 
 
 async def _fetch_futures_balance(page, push_fn: Callable, trader_name: str, pid: str):
+    # (method, endpoint, params)
+    # GET probes send params as query string; POST probes send as JSON body.
     probes = [
-        ("/v1/trace/future/trace/getFollowPortfolios", {"portfolioId": pid}),
-        ("/api/v2/copy/mix-follower/settings",         {"portfolioId": pid}),
-        ("/api/v2/copy/mix-follower/query-settings",   {"portfolioId": pid}),
+        ("POST", "/v1/trace/future/trace/getFollowPortfolios",   {"portfolioId": pid}),
+        ("POST", "/v1/trace/future/trace/getFollowPortfolios",   {"followPortfolioId": pid}),
+        ("GET",  "/api/v2/copy/mix-follower/settings",           {"portfolioId": pid}),
+        ("GET",  "/api/v2/copy/mix-follower/query-settings",     {"portfolioId": pid}),
+        ("GET",  "/api/v2/copy/mix-follower/account",            {"portfolioId": pid}),
     ]
     results = []
-    for ep, body in probes:
+    for method, ep, params in probes:
         try:
-            result = await page.evaluate("""async ([ep, body]) => {
+            result = await page.evaluate("""async ([method, ep, params]) => {
                 try {
-                    const r = await fetch(ep, {
-                        method: 'POST', credentials: 'include',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(body),
-                    });
+                    let url = ep;
+                    let opts = {method, credentials: 'include', headers: {}};
+                    if (method === 'GET') {
+                        url = ep + '?' + new URLSearchParams(params).toString();
+                    } else {
+                        opts.headers['Content-Type'] = 'application/json';
+                        opts.body = JSON.stringify(params);
+                    }
+                    const r = await fetch(url, opts);
                     const text = await r.text();
                     if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
                     const j = JSON.parse(text);
                     return {status: r.status, code: j?.code, data: j?.data,
-                            data_keys: j?.data ? Object.keys(Object(j.data)).slice(0,8) : null};
+                            data_keys: j?.data != null ? Object.keys(Object(j.data)).slice(0,8) : null};
                 } catch(e) { return {status: 0, error: String(e)}; }
-            }""", [ep, body])
+            }""", [method, ep, params])
             code = result.get("code") if isinstance(result, dict) else None
-            ep_short = ep.split("/")[-1]
+            ep_short = ep.split("/")[-1] + (f"[{method}]" if method == "GET" else "")
             results.append({"ep": ep_short, "http": result.get("status"), "code": code,
                              "error": result.get("error"), "data_keys": result.get("data_keys")})
+            logger.info("Futures balance[%s] %s: HTTP %s code=%s keys=%s err=%s",
+                        trader_name, ep_short, result.get("status"), code,
+                        result.get("data_keys"), result.get("error"))
             if result.get("error") == "html_redirect":
                 _status["auth_ok"] = False
                 continue
