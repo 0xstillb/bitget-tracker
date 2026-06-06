@@ -426,17 +426,28 @@ def _rebuild_trader_summary(name: str) -> dict:
     scraped_pnl = ts.get("realized_pnl", 0.0)
     all_time_pnl = scraped_pnl if scraped_pnl != 0.0 else trades_pnl
 
+    scraped_balance = ts.get("balance", 0.0)
+    investment      = ts.get("investment", 0.0)
+    open_pnl        = ts.get("open_pnl", 0.0)
+
+    # For futures traders Bitget doesn't expose a direct balance field,
+    # so compute it as: investment + all-time PnL + open (unrealized) PnL.
+    if _trader_type(name) == "futures" and scraped_balance == 0.0:
+        balance = round(investment + all_time_pnl + open_pnl, 2)
+    else:
+        balance = scraped_balance
+
     summary = {
         "name": name,
         "type": _trader_type(name),
         "portfolio_id": _trader_id(name),
-        "balance": ts.get("balance", 0.0),
-        "investment": ts.get("investment", 0.0),
+        "balance": balance,
+        "investment": investment,
         "daily_pnl": round(daily_pnl, 4),
         "all_time_pnl": round(all_time_pnl, 4),
-        "open_positions_pnl": ts.get("open_pnl", 0.0),
+        "open_positions_pnl": open_pnl,
         "pushed_at": tc["pushed_at"],
-        "has_data": tc["history_raw"] is not None or ts.get("balance", 0) > 0 or ts.get("investment", 0) > 0,
+        "has_data": tc["history_raw"] is not None or scraped_balance > 0 or investment > 0,
     }
     tc["summary"] = summary
     tc["trades"] = trades
