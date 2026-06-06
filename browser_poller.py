@@ -182,15 +182,14 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
             await page.route("**/*", _block)
             _status["browser_alive"] = True
 
-            # Warm-up: visit each trader's portfolio page so Bitget sets all
-            # section-specific cookies. CFD and Futures use separate cookie sets,
-            # so we must visit both /cfd-center/... and /futures-center/... pages.
+            # Warm-up: visit /about for Cloudflare bypass, then CFD portfolio pages
+            # to seed CFD-specific cookies. Futures-center pages are intentionally
+            # skipped — navigating there triggers CF bot-detection that blocks all
+            # subsequent /v1/trace/future/... API calls with 403.
             warmup_pages = ["/about"]
             for tname, pid in traders.items():
                 ttype = trader_types.get(tname, "cfd")
-                if ttype == "futures":
-                    warmup_pages.append(f"/copy-trading/futures-center/my-portfolio/{pid}")
-                else:
+                if ttype == "cfd":
                     warmup_pages.append(f"/copy-trading/cfd-center/my-portfolio/{pid}")
             for path in warmup_pages:
                 try:
@@ -333,7 +332,8 @@ async def _poll_futures_history(page, push_fn: Callable, trader_name: str, pid: 
             results.append({"ep": ep_short, "http": result.get("status"), "code": code,
                              "error": result.get("error"), "data_keys": result.get("data_keys")})
             if result.get("error") == "html_redirect":
-                _status["auth_ok"] = False
+                # Don't flip auth_ok — some futures probe endpoints are CF-blocked
+                # regardless of cookie health. Only CFD history controls auth status.
                 continue
             if result.get("status") == 200 and code in ("00000", "200", "0"):
                 _status["auth_ok"] = True
