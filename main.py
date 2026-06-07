@@ -19,9 +19,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BKK = timezone(timedelta(hours=7))
-SETTINGS_FILE = Path(os.environ.get("SETTINGS_PATH", "settings.json"))
-COOKIES_FILE  = Path(os.environ.get("COOKIES_PATH", "cookies.json"))
-TRADERS_FILE  = Path(os.environ.get("TRADERS_PATH", "traders.json"))
+SETTINGS_FILE    = Path(os.environ.get("SETTINGS_PATH", "settings.json"))
+COOKIES_FILE     = Path(os.environ.get("COOKIES_PATH", "cookies.json"))
+TRADERS_FILE     = Path(os.environ.get("TRADERS_PATH", "traders.json"))
+CREDENTIALS_FILE = Path(os.environ.get("CREDENTIALS_PATH", "credentials.json"))
 
 _BALANCE_PATS = ("balance", "equity", "totalbal", "totalequity",
                  "totalasset", "accountval", "worth", "asset")
@@ -147,6 +148,12 @@ _mt5: dict = {
     "trades": None,
     "history": None,
     "pushed_at": None,
+}
+
+_investment: dict = {
+    "data": None,        # result from fetch_net_investment
+    "fetched_at": None,  # ISO timestamp string
+    "error": None,
 }
 
 
@@ -308,6 +315,24 @@ def _parse_balance(raw: Any) -> float:
                 except (TypeError, ValueError):
                     pass
     return 0.0
+
+
+def _load_credentials() -> dict | None:
+    """Return {api_key, secret, passphrase} or None if not configured."""
+    if CREDENTIALS_FILE.exists():
+        try:
+            d = json.loads(CREDENTIALS_FILE.read_text())
+            if d.get("api_key") and d.get("secret") and d.get("passphrase"):
+                return d
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Fall back to env vars
+    k = os.environ.get("BITGET_API_KEY", "")
+    s = os.environ.get("BITGET_API_SECRET", "")
+    p = os.environ.get("BITGET_PASSPHRASE", "")
+    if k and s and p:
+        return {"api_key": k, "secret": s, "passphrase": p}
+    return None
 
 
 # ── Push handler ──────────────────────────────────────────────────────────────
@@ -493,6 +518,10 @@ def _rebuild_summary() -> None:
     if all_positions:
         total_open_pnl = sum(p["unrealized_pnl"] for p in all_positions)
 
+    # If API investment is available and positive, use it as the authoritative total
+    if _investment.get("data") and _investment["data"].get("net", 0) > 0:
+        total_investment = _investment["data"]["net"]
+
     _mt5["summary"] = {
         "daily_pnl": round(total_daily_pnl, 4),
         "open_positions": len(all_positions),
@@ -512,6 +541,38 @@ def _rebuild_summary() -> None:
     )
 
 
+async def _refresh_investment() -> None:
+    global _investment
+    creds = _load_credentials()
+    if not creds:
+        return
+    try:
+        from bitget_api import fetch_net_investment
+        result = await fetch_net_investment(
+            creds["api_key"], creds["secret"], creds["passphrase"]
+        )
+        _investment["data"] = result
+        _investment["fetched_at"] = datetime.now(BKK).isoformat()
+        _investment["error"] = None
+        logger.info("Investment refreshed: net=%.2f deposits=%.2f withdrawals=%.2f",
+                    result["net"], result["deposits"], result["withdrawals"])
+        # Auto-apply net investment to global settings so widget uses it
+        if result["net"] > 0:
+            _settings["investment"] = result["net"]
+            _save_settings(_settings)
+    except Exception as e:
+        _investment["error"] = str(e)
+        logger.error("Investment refresh failed: %s", e)
+
+
+async def _investment_poller():
+    """Refresh investment data on startup then every 6 hours."""
+    await asyncio.sleep(5)
+    while True:
+        await _refresh_investment()
+        await asyncio.sleep(6 * 3600)
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -527,8 +588,10 @@ async def lifespan(app: FastAPI):
 
     from browser_poller import start_poller
     task = asyncio.create_task(start_poller(_push_data))
+    inv_task = asyncio.create_task(_investment_poller())
     yield
     task.cancel()
+    inv_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -750,6 +813,52 @@ async def reset_trader_data(name: str):
         pass
     logger.info("Trader data reset: name=%s", name)
     return {"ok": True}
+
+
+@app.get("/api/investment")
+async def get_investment():
+    creds = _load_credentials()
+    return {
+        **(_investment["data"] or {}),
+        "fetched_at": _investment["fetched_at"],
+        "error": _investment["error"],
+        "has_credentials": creds is not None,
+    }
+
+
+@app.post("/api/investment/refresh")
+async def refresh_investment():
+    if not _load_credentials():
+        return {"ok": False, "error": "No API credentials configured"}
+    asyncio.create_task(_refresh_investment())
+    return {"ok": True, "message": "Refresh started"}
+
+
+@app.post("/api/credentials")
+async def save_credentials(request: Request):
+    body = await request.json()
+    api_key    = body.get("api_key", "").strip()
+    secret     = body.get("secret", "").strip()
+    passphrase = body.get("passphrase", "").strip()
+    if not api_key or not secret or not passphrase:
+        return {"ok": False, "error": "api_key, secret and passphrase are all required"}
+    CREDENTIALS_FILE.write_text(json.dumps({
+        "api_key": api_key,
+        "secret": secret,
+        "passphrase": passphrase,
+        "updated": datetime.now(BKK).isoformat(),
+    }))
+    logger.info("API credentials saved")
+    asyncio.create_task(_refresh_investment())
+    return {"ok": True}
+
+
+@app.get("/api/credentials/status")
+async def credentials_status():
+    creds = _load_credentials()
+    has = creds is not None
+    key_preview = (creds["api_key"][:6] + "...") if has else None
+    return {"configured": has, "key_preview": key_preview}
 
 
 # ── Browser poller endpoints ─────────────────────────────────────────────────

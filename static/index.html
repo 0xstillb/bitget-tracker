@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Bitget CFD Tracker · v6</title>
+  <title>Bitget CFD Tracker · v7</title>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Bitget" />
@@ -87,6 +87,28 @@
       font-family: var(--mono); cursor: default;
     }
     #last-updated.stale { color: var(--amber); }
+    .inv-api-row {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;
+    }
+    .inv-api-item { }
+    .inv-api-label {
+      font-size: 9px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.8px; margin-bottom: 2px;
+    }
+    .inv-api-val { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+    .api-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 6px; border-radius: 999px; font-size: 9px; font-weight: 700;
+      letter-spacing: 0.5px; background: rgba(0,196,122,0.10); color: var(--green);
+      font-family: var(--sans); flex-shrink: 0;
+    }
+    .api-badge.loading { background: rgba(74,94,74,0.12); color: var(--muted); }
+    #inv-refresh-btn {
+      background: none; border: none; cursor: pointer; color: var(--muted);
+      font-size: 10px; font-family: var(--sans); padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #inv-refresh-btn:hover { color: var(--green); }
     #theme-toggle {
       display: flex; align-items: center;
       background: var(--border); border-radius: 999px;
@@ -476,6 +498,27 @@
               <div style="font-size:9px;color:var(--muted);margin-top:1px;letter-spacing:0.3px">incl. open</div>
             </div>
           </div>
+          <div id="inv-api-section" style="display:none;margin-top:10px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="api-badge" id="inv-api-badge">API</span>
+              <span style="font-size:10px;color:var(--muted)" id="inv-api-time"></span>
+              <button id="inv-refresh-btn" onclick="refreshInvestment()">↻ Refresh</button>
+            </div>
+            <div class="inv-api-row">
+              <div class="inv-api-item">
+                <div class="inv-api-label">Deposits</div>
+                <div class="inv-api-val green" id="inv-deposits">—</div>
+              </div>
+              <div class="inv-api-item">
+                <div class="inv-api-label">Withdrawals</div>
+                <div class="inv-api-val red" id="inv-withdrawals">—</div>
+              </div>
+              <div class="inv-api-item">
+                <div class="inv-api-label">Net invested</div>
+                <div class="inv-api-val" id="inv-net">—</div>
+              </div>
+            </div>
+          </div>
         </div>
         <!-- Goal ring — tap to configure -->
         <div class="goal-ring-wrap" id="goal-ring-wrap" onclick="openSettings()" title="Tap to set goal" style="display:none">
@@ -594,6 +637,29 @@
           <li>Connect to Mac via USB</li>
           <li>Mac Safari → Develop → [your iPhone] → Network → Cookie header</li>
         </ol>
+      </div>
+    </details>
+    <details style="font-size:12px;color:var(--muted);margin-bottom:14px;cursor:pointer" id="api-key-details">
+      <summary style="color:var(--green);font-weight:600;font-size:12px;letter-spacing:0.3px">API Keys (for investment tracking)</summary>
+      <div style="margin-top:12px">
+        <p style="margin-bottom:10px;line-height:1.5">
+          Optional: enter your Bitget API key to auto-fetch deposit &amp; withdrawal history for net investment tracking.
+          Create a read-only key at bitget.com → Profile → API Management.
+        </p>
+        <div class="modal-field">
+          <label>API Key</label>
+          <input type="text" id="input-api-key" placeholder="bg_xxxxxxxxxxxxxxxx" autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label>Secret Key</label>
+          <input type="password" id="input-api-secret" placeholder="••••••••••••••••" autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label>Passphrase</label>
+          <input type="password" id="input-api-passphrase" placeholder="Your API passphrase" autocomplete="off" />
+        </div>
+        <div id="api-creds-status" style="font-size:12px;margin-bottom:8px;display:none"></div>
+        <button class="btn-save" id="api-creds-save" style="width:100%;margin-bottom:4px">Save API Keys</button>
       </div>
     </details>
     <div class="modal-field">
@@ -928,6 +994,38 @@
       <tbody>${rows}</tbody></table>`;
   }
 
+  async function fetchInvestment() {
+    try {
+      const inv = await fetch('/api/investment').then(r => r.json());
+      const sec = document.getElementById('inv-api-section');
+      if (!inv.has_credentials) { sec.style.display = 'none'; return; }
+      sec.style.display = 'block';
+      const badge = document.getElementById('inv-api-badge');
+      if (inv.net != null) {
+        document.getElementById('inv-deposits').textContent    = '$' + (inv.deposits || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+        document.getElementById('inv-withdrawals').textContent = '$' + (inv.withdrawals || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+        document.getElementById('inv-net').textContent         = '$' + (inv.net || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+        if (inv.fetched_at) {
+          const t = new Date(inv.fetched_at);
+          document.getElementById('inv-api-time').textContent = t.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' ' + t.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+        }
+        badge.textContent = 'API'; badge.className = 'api-badge';
+      } else {
+        badge.textContent = inv.error ? 'API Error' : 'Loading…';
+        badge.className = 'api-badge loading';
+      }
+    } catch(e) { console.error('fetchInvestment', e); }
+  }
+
+  async function refreshInvestment() {
+    const btn = document.getElementById('inv-refresh-btn');
+    btn.textContent = '↻ …'; btn.disabled = true;
+    await fetch('/api/investment/refresh', { method: 'POST' });
+    await new Promise(r => setTimeout(r, 3000));
+    await fetchInvestment();
+    btn.textContent = '↻ Refresh'; btn.disabled = false;
+  }
+
   async function fetchData() {
     const btn = document.getElementById('refresh-btn');
     btn.disabled = true; btn.classList.add('spinning');
@@ -1119,8 +1217,10 @@
 
   fetchData();
   fetchTraders();
+  fetchInvestment();
   setInterval(fetchData, 10_000);
   setInterval(fetchTraders, 30_000);
+  setInterval(fetchInvestment, 5 * 60 * 1000);  // refresh display every 5 min
   document.getElementById('refresh-btn').addEventListener('click', () => { fetchData(); fetchTraders(); });
 
   // Tabs
@@ -1219,6 +1319,12 @@
         cookieStatus.innerHTML = '<span style="color:var(--muted)">Cookie already set — paste a new one below to replace it.</span>';
       }
       cookieModal.classList.add('active');
+      fetch('/api/credentials/status').then(r => r.json()).then(s => {
+        if (s.configured) {
+          document.getElementById('api-key-details').querySelector('summary').textContent =
+            `API Keys (configured: ${s.key_preview}) ✓`;
+        }
+      });
     });
   }
 
@@ -1249,6 +1355,34 @@
       }, 2000);
     } else {
       cookieStatus.innerHTML = '<span class="red">Error: ' + (res.error || 'unknown') + '</span>';
+    }
+  });
+
+  document.getElementById('api-creds-save').addEventListener('click', async () => {
+    const key        = document.getElementById('input-api-key').value.trim();
+    const secret     = document.getElementById('input-api-secret').value.trim();
+    const passphrase = document.getElementById('input-api-passphrase').value.trim();
+    const statusEl   = document.getElementById('api-creds-status');
+    if (!key || !secret || !passphrase) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = '<span class="amber">All three fields are required.</span>';
+      return;
+    }
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = '<span style="color:var(--muted)">Saving…</span>';
+    const res = await fetch('/api/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key, secret, passphrase }),
+    }).then(r => r.json());
+    if (res.ok) {
+      statusEl.innerHTML = '<span class="green">Saved. Fetching investment data…</span>';
+      document.getElementById('input-api-key').value = '';
+      document.getElementById('input-api-secret').value = '';
+      document.getElementById('input-api-passphrase').value = '';
+      setTimeout(() => { fetchInvestment(); }, 4000);
+    } else {
+      statusEl.innerHTML = '<span class="red">Error: ' + (res.error || 'unknown') + '</span>';
     }
   });
 
