@@ -171,7 +171,7 @@
 
     /* ── Chart section ────────────────────────────────────────── */
     .chart-section {
-      padding: 16px 16px 0;
+      padding: 16px 16px 14px;
       border-bottom: 1px solid var(--border);
       position: relative;
     }
@@ -184,8 +184,9 @@
       border-radius: 6px; padding: 6px 10px; z-index: 10;
       white-space: nowrap;
     }
-    .ct-date { font-size: 9px; color: var(--muted); margin-bottom: 3px; letter-spacing: 0.5px; text-transform: uppercase; }
-    .ct-val  { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+    .ct-date  { font-size: 9px; color: var(--muted); margin-bottom: 3px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .ct-val   { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+    .ct-daily { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
 
     /* ── Tabs ─────────────────────────────────────────────────── */
     .tab-section { border-bottom: 1px solid var(--border); }
@@ -429,7 +430,7 @@
     <div class="chart-section">
       <div class="section-label" style="margin-bottom:8px">30-Day Cumulative P&amp;L</div>
       <canvas id="chart-canvas"></canvas>
-      <div id="chart-tooltip"><div class="ct-date"></div><div class="ct-val"></div></div>
+      <div id="chart-tooltip"><div class="ct-date"></div><div class="ct-val"></div><div class="ct-daily"></div></div>
     </div>
 
     <!-- Positions + History tabs -->
@@ -676,8 +677,15 @@
     _chartHoverWired = true;
     const canvas = document.getElementById('chart-canvas');
     const tooltip = document.getElementById('chart-tooltip');
-    const ttDate = tooltip.querySelector('.ct-date');
-    const ttVal  = tooltip.querySelector('.ct-val');
+    const ttDate  = tooltip.querySelector('.ct-date');
+    const ttVal   = tooltip.querySelector('.ct-val');
+    const ttDaily = tooltip.querySelector('.ct-daily');
+
+    function fmtPnl(n) {
+      if (n == null) return '—';
+      if (n === 0) return '$0.00';
+      return (n > 0 ? '+' : '-') + '$' + Math.abs(n).toFixed(2);
+    }
 
     function showHover(clientX) {
       const s = canvas._state;
@@ -688,11 +696,15 @@
         Math.round((x - s.pad.left) / s.pw * (s.vals.length - 1))));
       drawChart(canvas._history, idx);
 
-      const v = s.vals[idx];
-      const c = v > 0 ? '#00c47a' : v < 0 ? '#e84040' : '#dde8dd';
-      ttDate.textContent = s.history[idx].date.slice(5);
-      ttVal.textContent  = v === 0 ? '$0.00' : (v > 0 ? '+' : '-') + '$' + Math.abs(v).toFixed(2);
-      ttVal.style.color  = c;
+      const v  = s.vals[idx];
+      const dv = s.history[idx].pnl;
+      const c  = v  > 0 ? '#00c47a' : v  < 0 ? '#e84040' : '#dde8dd';
+      const dc = dv > 0 ? '#00c47a' : dv < 0 ? '#e84040' : '#4a5e4a';
+      ttDate.textContent  = s.history[idx].date.slice(5);
+      ttVal.textContent   = fmtPnl(v);
+      ttVal.style.color   = c;
+      ttDaily.textContent = 'Day ' + fmtPnl(dv);
+      ttDaily.style.color = dc;
 
       const parentW = canvas.parentElement.clientWidth;
       const tipW = tooltip.offsetWidth || 90;
@@ -771,9 +783,12 @@
       document.getElementById('total-balance').textContent = fmtBal(mt5.total_balance);
       document.getElementById('total-investment').textContent = fmtBal(mt5.total_investment);
 
-      // Return % + progress bar
-      if (mt5.total_balance && mt5.total_investment && mt5.total_investment > 0) {
-        const ret = (mt5.total_balance - mt5.total_investment) / mt5.total_investment * 100;
+      // Return % + progress bar — when investment=0 (all profit, no principal), use balance as base
+      const _base = (mt5.total_investment > 0) ? mt5.total_investment : mt5.total_balance;
+      if (mt5.total_balance && _base > 0) {
+        const ret = mt5.total_investment > 0
+          ? (mt5.total_balance - mt5.total_investment) / mt5.total_investment * 100
+          : 100; // 100% gain — entire balance is pure profit
         const retEl = document.getElementById('return-pct');
         retEl.textContent = (ret >= 0 ? '+' : '') + ret.toFixed(2) + '%';
         retEl.className = colorClass(ret);
@@ -797,8 +812,8 @@
       document.getElementById('daily-sub').textContent =
         todayTrades + ' trade' + (todayTrades !== 1 ? 's' : '') + ' today';
 
-      const dailyRet = (mt5.total_investment > 0 && mt5.daily_pnl != null)
-        ? mt5.daily_pnl / mt5.total_investment * 100 : 0;
+      const dailyRet = (mt5.daily_pnl != null && _base > 0)
+        ? mt5.daily_pnl / _base * 100 : 0;
       if (Math.abs(dailyRet) >= 0.05) {
         const db = document.getElementById('daily-badge');
         db.textContent = (dailyRet > 0 ? '↑ ' : '↓ ') + Math.abs(dailyRet).toFixed(2) + '%';
@@ -831,8 +846,8 @@
       const atEl = document.getElementById('all-time-pnl');
       atEl.textContent = fmt(mt5.all_time_pnl);
       atEl.className = 'stat-val ' + colorClass(mt5.all_time_pnl);
-      const atRet = (mt5.all_time_pnl != null && mt5.total_investment > 0)
-        ? mt5.all_time_pnl / mt5.total_investment * 100 : 0;
+      const atRet = (mt5.all_time_pnl != null && _base > 0)
+        ? mt5.all_time_pnl / _base * 100 : 0;
       if (Math.abs(atRet) >= 0.05) {
         const ab = document.getElementById('alltime-badge');
         ab.textContent = (atRet > 0 ? '↑ ' : '↓ ') + Math.abs(atRet).toFixed(1) + '%';
@@ -871,7 +886,8 @@
         const oStr   = hasData ? fmt(t.open_positions_pnl) : '—';
         const typeCls   = t.type === 'futures' ? 'futures' : 'cfd';
         const typeLabel = t.type === 'futures' ? 'FUTURES' : 'CFD';
-        const _atRetRaw = hasData && t.investment > 0 ? (t.all_time_pnl / t.investment) * 100 : 0;
+        const _tBase    = hasData ? (t.investment > 0 ? t.investment : t.balance) : 0;
+        const _atRetRaw = _tBase > 0 ? (t.all_time_pnl / _tBase) * 100 : 0;
         const atRetPct  = Math.abs(_atRetRaw) >= 0.05 ? _atRetRaw : null;
         const atBadge   = atRetPct != null
           ? `<span class="trend-badge ${atRetPct > 0 ? 'up' : 'down'}">${atRetPct > 0 ? '↑' : '↓'} ${Math.abs(atRetPct).toFixed(1)}%</span>`
