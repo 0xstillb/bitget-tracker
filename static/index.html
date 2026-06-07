@@ -391,7 +391,8 @@
         </div>
         <div class="bal-sub-item" id="return-item" style="display:none">
           <div class="bal-sub-label">Return</div>
-          <div id="return-pct">—</div>
+          <div id="return-pct" title="(balance − invested) ÷ invested · includes unrealized open P&L">—</div>
+          <div style="font-size:9px;color:var(--muted);margin-top:1px;letter-spacing:0.3px">incl. open</div>
         </div>
       </div>
       <div class="bal-progress"><div id="bal-progress-fill" class="bal-progress-fill" style="width:0%"></div></div>
@@ -422,7 +423,7 @@
       <div class="stat-card">
         <div class="stat-label">All-time</div>
         <div id="all-time-pnl" class="stat-val">—</div>
-        <span id="alltime-badge" class="trend-badge flat" style="display:none"></span>
+        <span id="alltime-badge" class="trend-badge flat" style="display:none" title="Realized P&L ÷ invested · closed trades only · excludes open positions"></span>
       </div>
     </div>
 
@@ -822,12 +823,13 @@
       document.getElementById('total-balance').textContent = fmtBal(mt5.total_balance);
       document.getElementById('total-investment').textContent = fmtBal(mt5.total_investment);
 
-      // Return % + progress bar — when investment=0 (all profit, no principal), use balance as base
+      // Return % + progress bar — (balance−invested)/invested includes unrealized open PnL
+      // ALL-TIME badge uses all_time_pnl/invested (realized only) — intentionally different
       const _base = (mt5.total_investment > 0) ? mt5.total_investment : mt5.total_balance;
       if (mt5.total_balance && _base > 0) {
         const ret = mt5.total_investment > 0
           ? (mt5.total_balance - mt5.total_investment) / mt5.total_investment * 100
-          : 100; // 100% gain — entire balance is pure profit
+          : 100;
         const retEl = document.getElementById('return-pct');
         retEl.textContent = (ret >= 0 ? '+' : '') + ret.toFixed(2) + '%';
         retEl.className = colorClass(ret);
