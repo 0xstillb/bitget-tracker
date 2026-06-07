@@ -632,12 +632,17 @@
       if (dv === 0) continue;
       const x  = xOf(i);
       const bH = Math.min(Math.abs(dv) * barScale, ph * 0.35);
+      // Clamp bar to plot area so first/last bars don't bleed into axis padding
+      const bL = Math.max(pad.left, x - barW / 2);
+      const bR = Math.min(pad.left + pw, x + barW / 2);
+      const bW = Math.max(0, bR - bL);
+      if (bW === 0) continue;
       ctx.globalAlpha = hoverIdx === i ? 0.65 : 0.28;
       ctx.fillStyle = dv > 0 ? '#00c47a' : '#e84040';
       if (dv > 0) {
-        ctx.fillRect(x - barW / 2, Math.max(zeroY - bH, pad.top), barW, bH);
+        ctx.fillRect(bL, Math.max(zeroY - bH, pad.top), bW, bH);
       } else {
-        ctx.fillRect(x - barW / 2, zeroY, barW, Math.min(bH, pad.top + ph - zeroY));
+        ctx.fillRect(bL, zeroY, bW, Math.min(bH, pad.top + ph - zeroY));
       }
       ctx.globalAlpha = 1;
     }
