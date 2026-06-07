@@ -28,11 +28,9 @@ async function fetchData() {
 
 // ── Typography ────────────────────────────────────────────────────────────────
 // For all numeric values — monospaced digits align cleanly (functional, not decorative)
-function digits(parent, str, size, color = TEXT, bold = false) {
+function digits(parent, str, size, color = TEXT) {
   const t = parent.addText(str);
-  t.font = bold
-    ? Font.boldMonospacedDigitSystemFont(size)
-    : Font.regularMonospacedDigitSystemFont(size);
+  t.font = Font.monospacedDigitSystemFont(size);
   t.textColor = color;
   t.lineLimit = 1;
   t.minimumScaleFactor = 0.8;
@@ -106,7 +104,7 @@ if (family === "accessoryRectangular") {
     row.layoutHorizontally();
     row.centerAlignContent();
     note(row, lbl + "  ", 10);
-    digits(row, val, 11, c, true);
+    digits(row, val, 11, c);
     if (i === 0 && stale) {
       row.addSpacer(4);
       note(row, "·", 10, AMBER);
@@ -129,7 +127,7 @@ if (family === "small") {
 
   note(sw, "today", 8);
   sw.addSpacer(6);
-  digits(sw, fmtPnL(pnl), 22, pnlColor(pnl), true);
+  digits(sw, fmtPnL(pnl), 22, pnlColor(pnl));
   sw.addSpacer();
   note(sw, fmtUSD(bal), 11, MUTED);
   sw.addSpacer(4);
@@ -162,7 +160,7 @@ widget.addSpacer(8);
 const rBal = widget.addStack();
 rBal.layoutHorizontally();
 rBal.bottomAlignContent();
-digits(rBal, fmtUSD(bal), 26, TEXT, true);
+digits(rBal, fmtUSD(bal), 26, TEXT);
 rBal.addSpacer();
 const invStack = rBal.addStack();
 invStack.layoutVertically();
@@ -176,7 +174,7 @@ const rToday = widget.addStack();
 rToday.layoutHorizontally();
 rToday.centerAlignContent();
 note(rToday, "today  ");
-digits(rToday, fmtPnL(pnl), 20, pnlColor(pnl), true);
+digits(rToday, fmtPnL(pnl), 20, pnlColor(pnl));
 rToday.addSpacer();
 
 widget.addSpacer(10);
@@ -188,7 +186,7 @@ rBtm.centerAlignContent();
 
 const ocol = rBtm.addStack(); ocol.layoutVertically();
 note(ocol, "open");
-digits(ocol, fmtPnL(oPnl), 11, pnlColor(oPnl), true);
+digits(ocol, fmtPnL(oPnl), 11, pnlColor(oPnl));
 
 rBtm.addSpacer();
 
@@ -202,7 +200,7 @@ rBtm.addSpacer();
 
 const acol = rBtm.addStack(); acol.layoutVertically();
 note(acol, "all-time");
-digits(acol, fmtPnL(allPnl), 11, pnlColor(allPnl), true);
+digits(acol, fmtPnL(allPnl), 11, pnlColor(allPnl));
 
 Script.setWidget(widget);
 Script.complete();
