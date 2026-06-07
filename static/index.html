@@ -615,13 +615,16 @@
 
     const pad = { top: 10, right: 34, bottom: 28, left: 52 };
     const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
-    const xOf  = i => pad.left + (i / (vals.length - 1)) * pw;
-    const yOf  = v => pad.top + ph - ((v - min) / range) * ph;
+
+    // Inner x-padding: inset first/last points so bars have full width + breathing room
+    const barW  = Math.max(2, (pw / vals.length) * 0.55);
+    const xPad  = Math.ceil(barW);  // one bar-width of space on each side
+    const xOf   = i => pad.left + xPad + (i / (vals.length - 1)) * (pw - 2 * xPad);
+    const yOf   = v => pad.top + ph - ((v - min) / range) * ph;
 
     // Bar zero: share the cumulative zero line, clamped inside the plot area
-    const zeroY   = Math.max(pad.top + 1, Math.min(yOf(0), pad.top + ph - 1));
-    const barScale = (ph * 0.35) / dAbsMax;  // max bar height = 35% of plot height
-    const barW     = Math.max(2, (pw / vals.length) * 0.55);
+    const zeroY    = Math.max(pad.top + 1, Math.min(yOf(0), pad.top + ph - 1));
+    const barScale = (ph * 0.35) / dAbsMax;
 
     // Store state for hover redraws
     canvas._state = { vals, dVals, min, max, pad, pw, ph, w, h, xOf, yOf, zeroY, barScale, barW, history };
@@ -632,17 +635,12 @@
       if (dv === 0) continue;
       const x  = xOf(i);
       const bH = Math.min(Math.abs(dv) * barScale, ph * 0.35);
-      // Clamp bar to plot area so first/last bars don't bleed into axis padding
-      const bL = Math.max(pad.left, x - barW / 2);
-      const bR = Math.min(pad.left + pw, x + barW / 2);
-      const bW = Math.max(0, bR - bL);
-      if (bW === 0) continue;
       ctx.globalAlpha = hoverIdx === i ? 0.65 : 0.28;
       ctx.fillStyle = dv > 0 ? '#00c47a' : '#e84040';
       if (dv > 0) {
-        ctx.fillRect(bL, Math.max(zeroY - bH, pad.top), bW, bH);
+        ctx.fillRect(x - barW / 2, Math.max(zeroY - bH, pad.top), barW, bH);
       } else {
-        ctx.fillRect(bL, zeroY, bW, Math.min(bH, pad.top + ph - zeroY));
+        ctx.fillRect(x - barW / 2, zeroY, barW, Math.min(bH, pad.top + ph - zeroY));
       }
       ctx.globalAlpha = 1;
     }
