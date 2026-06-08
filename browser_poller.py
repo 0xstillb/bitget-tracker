@@ -669,6 +669,25 @@ def _extract_rows(data) -> list:
     return []
 
 
+def _oldest_close_ms(rows: list) -> int | None:
+    """Return the oldest closeTime (ms) from a batch of history rows, or None."""
+    oldest = None
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        for key in ("closeTime", "closedAt", "closeTs", "ctime"):
+            v = r.get(key)
+            if v:
+                try:
+                    t = int(v)
+                    ms = t * 1000 if t < 10_000_000_000 else t
+                    if oldest is None or ms < oldest:
+                        oldest = ms
+                except (TypeError, ValueError):
+                    pass
+    return oldest
+
+
 async def _fetch_cancelled_copies(page, push_fn: Callable):
     """Probe for cancelled CFD copy portfolios (account-level, no navigation).
 
