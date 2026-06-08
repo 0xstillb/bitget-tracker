@@ -125,9 +125,13 @@ async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
                            {"coin": coin}, api_key, secret, passphrase),
         )
 
-    # Filter deposits by coin client-side
+    # All unique coin names returned in raw deposit records (before filtering)
+    dep_all_coins = list({str(r.get("coin", "")) for r in deposits_all})
+
+    # Filter deposits by coin client-side.
+    # Use prefix match so "USDT-TRC20", "USDT-ERC20" etc. are included.
     deposits = [r for r in deposits_all
-                if r.get("coin", "").upper() == coin.upper()]
+                if str(r.get("coin", "")).upper().startswith(coin.upper())]
 
     dep_success = [r for r in deposits if _is_success(r)]
     wdw_success = [r for r in withdrawals if _is_success(r)]
@@ -140,9 +144,11 @@ async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
     wdw_statuses = list({str(r.get("status", "")) for r in withdrawals})
 
     logger.info(
-        "Investment fetch: dep_total=%.2f (%d/%d success) wdw_total=%.2f (%d/%d success)",
+        "Investment fetch: dep_total=%.2f (%d/%d success) wdw_total=%.2f (%d/%d success) "
+        "raw_all=%d coins=%s",
         dep_total, len(dep_success), len(deposits),
         wdw_total, len(wdw_success), len(withdrawals),
+        len(deposits_all), dep_all_coins,
     )
 
     return {
@@ -154,9 +160,13 @@ async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
         "deposit_success_count": len(dep_success),
         "withdrawal_success_count": len(wdw_success),
         "coin": coin,
-        # Diagnostic fields — helps identify status value mismatches
+        # Diagnostic fields — helps identify status value / coin name mismatches
         "_dep_statuses": dep_statuses,
         "_wdw_statuses": wdw_statuses,
         "_dep_meta": dep_meta,
         "_wdw_meta": wdw_meta,
+        "_dep_all_coins": dep_all_coins,        # all coin types in raw deposit records
+        "_dep_raw_count": len(deposits_all),    # total deposits before coin filter
+        "_dep_sample": deposits_all[:3],        # first 3 raw deposit records
+        "_wdw_sample": withdrawals[:3],         # first 3 raw withdrawal records
     }
