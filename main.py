@@ -351,7 +351,41 @@ def _push_data(kind: str, data, trader: str = None):
         _mt5["pushed_at"] = datetime.now(BKK).strftime("%H:%M")
         tc["pushed_at"] = _mt5["pushed_at"]
     elif kind == "history":
-        tc["history_raw"] = data
+        # Merge new rows with existing history instead of replacing.
+        # This builds up 30-day data across poll cycles, since each poll
+        # only returns the latest page(s) and an active trader's 50 most
+        # recent trades can all be from the same day.
+        new_rows = _extract_history_rows(data)
+        if new_rows:
+            existing_rows = _extract_history_rows(tc.get("history_raw"))
+            # Deduplicate by close timestamp + symbol (unique per trade)
+            def _trade_key(r: dict) -> str:
+                ct = (r.get("closeTime") or r.get("closedAt") or
+                      r.get("closeTs") or r.get("ctime") or "")
+                return f"{ct}_{r.get('symbol', '')}"
+            seen = {_trade_key(r) for r in new_rows if isinstance(r, dict)}
+            merged = list(new_rows)
+            for r in existing_rows:
+                if isinstance(r, dict) and _trade_key(r) not in seen:
+                    merged.append(r)
+            # Trim to last 60 days to keep memory bounded
+            cutoff_ms = int((datetime.now(BKK) - timedelta(days=60)).timestamp() * 1000)
+            def _close_ms(r: dict) -> int:
+                for k in ("closeTime", "closedAt", "closeTs", "ctime"):
+                    v = r.get(k)
+                    if v:
+                        try:
+                            t = int(v)
+                            return t * 1000 if t < 10_000_000_000 else t
+                        except (TypeError, ValueError):
+                            pass
+                return cutoff_ms + 1  # keep if unknown
+            merged = [r for r in merged if _close_ms(r) > cutoff_ms]
+            tc["history_raw"] = {"code": "200", "data": {"rows": merged}}
+            logger.info("History[%s]: merged %d new + kept old → %d total rows",
+                        trader, len(new_rows), len(merged))
+        else:
+            tc["history_raw"] = data
     elif kind == "copy_details":
         tc["pushed_at"] = datetime.now(BKK).strftime("%H:%M")
         _mt5["pushed_at"] = tc["pushed_at"]
@@ -695,6 +729,11 @@ async def get_mt5_debug():
             "extracted_count": len(extracted_hist),
             "parsed_count": len(parsed_hist),
             "parsed_sample": parsed_hist[:3],
+            "history_date_range": (
+                f"{parsed_hist[-1]['time'][:10]} → {parsed_hist[0]['time'][:10]}"
+                if len(parsed_hist) >= 2 else
+                (parsed_hist[0]['time'][:10] if parsed_hist else "none")
+            ),
             "settings": _ts(name),
             "pushed_at": tc["pushed_at"],
         }
