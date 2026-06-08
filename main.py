@@ -468,6 +468,47 @@ def _push_data(kind: str, data, trader: str = None):
                     break
             if changed:
                 _save_settings(_settings)
+    elif kind == "cancelled_copies":
+        # Account-level: net profit from all copy portfolios the user has stopped.
+        # Stored globally (not per-trader) since these copies no longer exist as traders.
+        rows = data if isinstance(data, list) else []
+        if rows:
+            total = 0.0
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                # Try direct netProfit field first; fall back to realizedPnl - profitShareAmount
+                for key in ("netProfit", "net_profit", "estNetProfit",
+                            "totalProfit", "profit", "closedPnl"):
+                    if key in r:
+                        try:
+                            total += float(r[key])
+                            break
+                        except (TypeError, ValueError):
+                            pass
+                else:
+                    # Compute from realized - profit share if no direct field
+                    rpnl = 0.0
+                    pshare = 0.0
+                    for k in ("realizedPnl", "realizedProfit", "realPnl"):
+                        if k in r:
+                            try:
+                                rpnl = float(r[k])
+                                break
+                            except (TypeError, ValueError):
+                                pass
+                    for k in ("profitSharingAmount", "profitShareAmount", "shareProfit"):
+                        if k in r:
+                            try:
+                                pshare = float(r[k])
+                                break
+                            except (TypeError, ValueError):
+                                pass
+                    total += rpnl - pshare
+            _settings["cancelled_copy_pnl"] = round(total, 2)
+            _settings["cancelled_copy_count"] = len(rows)
+            _save_settings(_settings)
+            logger.info("Cancelled copies: %d entries, total net_profit=%.2f", len(rows), total)
     elif kind == "fund_flow":
         # Futures copy trading transfer history — compute net investment.
         # Only applies to futures traders; ignore if type has already changed to cfd
@@ -590,11 +631,17 @@ def _rebuild_summary() -> None:
     if _investment.get("data") and _investment["data"].get("net", 0) > 0:
         total_investment = _investment["data"]["net"]
 
+    cancelled_copy_pnl = round(_settings.get("cancelled_copy_pnl", 0.0), 2)
+    cancelled_copy_count = _settings.get("cancelled_copy_count", 0)
+
     _mt5["summary"] = {
         "daily_pnl": round(total_daily_pnl, 4),
         "open_positions": total_open_count,
         "open_positions_pnl": round(total_open_pnl, 4),
-        "all_time_pnl": round(total_all_time_pnl, 4),
+        "all_time_pnl": round(total_all_time_pnl + cancelled_copy_pnl, 4),
+        "active_trader_pnl": round(total_all_time_pnl, 4),
+        "cancelled_copy_pnl": cancelled_copy_pnl,
+        "cancelled_copy_count": cancelled_copy_count,
         "total_balance": round(total_balance, 2),
         "total_investment": round(total_investment, 2),
         "pushed_at": _mt5["pushed_at"],
@@ -750,6 +797,9 @@ async def get_mt5_debug():
         },
         "traders": traders_debug,
         "aggregate_settings": {k: v for k, v in _settings.items() if k != "traders"},
+        "cancelled_copy_pnl": _settings.get("cancelled_copy_pnl"),
+        "cancelled_copy_count": _settings.get("cancelled_copy_count"),
+        "cancelled_copies_probe": __import__("browser_poller")._status.get("cancelled_copies_probe"),
     }
 
 
@@ -780,6 +830,8 @@ async def post_settings(request: Request):
         _settings["balance"] = round(float(body["balance"]), 2)
     if "investment" in body:
         _settings["investment"] = round(float(body["investment"]), 2)
+    if "cancelled_copy_pnl" in body:
+        _settings["cancelled_copy_pnl"] = round(float(body["cancelled_copy_pnl"]), 2)
     _save_settings(_settings)
     if any(_tc(n)["history_raw"] is not None for n in _trader_names()):
         _rebuild_summary()

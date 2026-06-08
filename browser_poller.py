@@ -197,6 +197,9 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
                 ttype = trader_types.get(tname, "cfd")
                 if ttype == "cfd":
                     warmup_pages.append(f"/copy-trading/cfd-center/my-portfolio/{pid}")
+            # Visit followers center to seed cookies for cancelled-copies API calls
+            if any(trader_types.get(n, "cfd") == "cfd" for n in traders):
+                warmup_pages.append("/copy-trading/cfd-center/followers")
             for path in warmup_pages:
                 try:
                     await page.goto(f"{BITGET_BASE}{path}",
@@ -467,6 +470,7 @@ async def _fetch_balance(page, push_fn: Callable,
 
     if cfd_traders:
         await _fetch_cfd_balances(page, push_fn, cfd_traders)
+        await _fetch_cancelled_copies(page, push_fn)
 
     for trader_name, pid in fut_traders.items():
         await _fetch_futures_balance(page, push_fn, trader_name, pid)
@@ -682,3 +686,81 @@ async def _fetch_futures_fund_flow(page, push_fn: Callable, trader_name: str, pi
             _status["auth_ok"] = False
     except Exception as e:
         logger.warning("Futures fund_flow[%s] error: %s", trader_name, e)
+
+
+# ── Cancelled copy portfolios ─────────────────────────────────────────────────
+
+async def _fetch_cancelled_copies(page, push_fn: Callable):
+    """Probe for historical/cancelled CFD copy portfolios.
+    Sums up netProfit across all stopped copies and pushes as 'cancelled_copies'.
+    Endpoint is not officially documented — probes several candidates in order.
+    """
+    probes = [
+        ("POST", "/v1/trace/mt5/trace/getHistoryFollowPortfolios",
+         {"pageNo": 1, "pageSize": 100}),
+        ("POST", "/v1/trace/mt5/trace/getFollowPortfolioHistory",
+         {"pageNo": 1, "pageSize": 100}),
+        ("POST", "/v1/trace/mt5/trace/followerHistoryPortfolio",
+         {"pageNo": 1, "pageSize": 100}),
+        ("GET",  "/api/v2/copy/mt5-follower/history-portfolios",
+         {"pageNo": "1", "pageSize": "100"}),
+        ("POST", "/v1/copy/mt5/follower/history",
+         {"pageNo": 1, "pageSize": 100}),
+    ]
+    results = []
+    for method, ep, params in probes:
+        try:
+            result = await page.evaluate("""async ([method, ep, params]) => {
+                try {
+                    let url = ep;
+                    let opts = {method, credentials: 'include', headers: {}};
+                    if (method === 'GET') {
+                        url = ep + '?' + new URLSearchParams(params).toString();
+                    } else {
+                        opts.headers['Content-Type'] = 'application/json';
+                        opts.body = JSON.stringify(params);
+                    }
+                    const r = await fetch(url, opts);
+                    const text = await r.text();
+                    if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
+                    const j = JSON.parse(text);
+                    return {status: r.status, code: j?.code, msg: j?.msg, data: j?.data,
+                            data_keys: j?.data != null ? Object.keys(Object(j.data)).slice(0, 10) : null,
+                            row0: (() => {
+                                const d = j?.data;
+                                const rows = Array.isArray(d) ? d :
+                                    (d?.rows || d?.list || d?.portfolioDetails || []);
+                                const r0 = rows[0];
+                                return r0 ? Object.keys(r0).slice(0, 15) : null;
+                            })()};
+                } catch(e) { return {status: 0, error: String(e)}; }
+            }""", [method, ep, params])
+            code = result.get("code") if isinstance(result, dict) else None
+            ep_short = ep.split("/")[-1]
+            logger.info("Cancelled copies %s: HTTP %s code=%s keys=%s row0_keys=%s err=%s",
+                        ep_short, result.get("status"), code,
+                        result.get("data_keys"), result.get("row0"), result.get("error"))
+            results.append({
+                "ep": ep_short, "http": result.get("status"), "code": code,
+                "error": result.get("error"), "data_keys": result.get("data_keys"),
+                "row0_keys": result.get("row0"),
+            })
+            if result.get("error") == "html_redirect":
+                continue
+            if result.get("status") == 200 and code in ("00000", "200", "0"):
+                data = result.get("data")
+                if data:
+                    rows = (data if isinstance(data, list) else
+                            data.get("rows") or data.get("list") or
+                            data.get("portfolioDetails") or [])
+                    if rows:
+                        logger.info("Cancelled copies found via %s: %d entries", ep_short, len(rows))
+                        push_fn("cancelled_copies", rows)
+                        _status["cancelled_copies_probe"] = results
+                        return
+        except Exception as e:
+            ep_short = ep.split("/")[-1]
+            logger.warning("Cancelled copies %s error: %s", ep_short, e)
+            results.append({"ep": ep_short, "error": str(e)})
+    _status["cancelled_copies_probe"] = results
+    logger.info("Cancelled copies: no probe succeeded — tried %d endpoints", len(probes))
