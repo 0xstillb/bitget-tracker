@@ -398,15 +398,31 @@ def _push_data(kind: str, data, trader: str = None):
                             logger.info("Auto-updated investment[%s]=%.2f from key=%s", trader, val, key)
                     except (TypeError, ValueError):
                         pass
-            # Open (floating) PnL from portfolio details
+            # Open (floating) PnL from portfolio details.
+            # In MT5/CFD copy trading, Bitget uses "profit" for floating PnL
+            # (equity = balance + profit). We also fall back to equity - balance.
+            open_pnl_found = False
             for key in ("floatProfit", "floatingProfit", "unrealizedPnl", "openPnl",
-                        "unrealizedPL", "upl", "floatPL"):
+                        "unrealizedPL", "upl", "floatPL", "profit"):
                 if key in data:
                     try:
                         ts["open_pnl"] = round(float(data[key]), 2)
+                        open_pnl_found = True
                     except (TypeError, ValueError):
                         pass
                     break
+            if not open_pnl_found:
+                # equity - balance fallback (handles any field naming)
+                try:
+                    eq = float(data.get("equity") or data.get("netValue") or data.get("totalEquity") or 0)
+                    bal = float(data.get("balance") or ts.get("balance") or 0)
+                    if eq > 0 and bal > 0 and abs(eq - bal) > 0.001:
+                        ts["open_pnl"] = round(eq - bal, 2)
+                except (TypeError, ValueError):
+                    pass
+            # Log all keys on first push so we can diagnose field names
+            if not ts.get("_copy_detail_keys"):
+                ts["_copy_detail_keys"] = list(data.keys())[:20]
             if changed:
                 _save_settings(_settings)
     elif kind == "fund_flow":
