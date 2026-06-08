@@ -52,10 +52,7 @@ def _is_success(row: dict) -> bool:
 async def _get_all_pages(client: httpx.AsyncClient, path: str, base_params: dict,
                          api_key: str, secret: str, passphrase: str,
                          max_pages: int = 20) -> tuple[list[dict], dict]:
-    """
-    Fetch all pages from a Bitget list endpoint.
-    Returns (rows, meta) where meta carries diagnostic info.
-    """
+    """Fetch all pages for a single time window."""
     rows: list[dict] = []
     cursor: str | None = None
     meta: dict = {"pages_fetched": 0, "last_code": None, "last_msg": None, "error": None,
@@ -109,25 +106,42 @@ async def _get_all_pages(client: httpx.AsyncClient, path: str, base_params: dict
     return rows, meta
 
 
-async def _fetch_bills_deposits(client: httpx.AsyncClient, coin: str,
-                                 api_key: str, secret: str, passphrase: str,
-                                 start_ms: int, now_ms: int) -> tuple[float, dict]:
+async def _get_windowed(client: httpx.AsyncClient, path: str, base_params: dict,
+                         api_key: str, secret: str, passphrase: str,
+                         start_ms: int, now_ms: int,
+                         window_days: int = 85) -> tuple[list[dict], dict]:
     """
-    Fallback for deposit-records: sum deposit entries from spot account bills ledger.
-    Bills ledger entries are always final (no status check needed).
-    Returns (total_deposited, meta).
+    Fetch all records across multiple 85-day windows to work around Bitget's 90-day limit.
+    Walks backwards from now_ms to start_ms.
     """
-    rows, meta = await _get_all_pages(
-        client, "/api/v2/spot/account/bills",
-        {"coin": coin, "bizType": "deposit",
-         "startTime": str(start_ms), "endTime": str(now_ms)},
-        api_key, secret, passphrase,
-    )
-    # Bills use 'size' (always positive for deposits) or 'amount'
-    total = sum(abs(_row_amount(r)) for r in rows)
-    logger.info("Bills fallback: %d deposit records, total=%.2f (code=%s)",
-                len(rows), total, meta.get("last_code"))
-    return total, meta, rows
+    all_rows: list[dict] = []
+    combined: dict = {"pages_fetched": 0, "windows_fetched": 0,
+                      "last_code": None, "last_msg": None, "error": None,
+                      "first_response": None}
+
+    window_ms = window_days * 24 * 3600 * 1000
+    end = now_ms
+
+    while end > start_ms:
+        win_start = max(end - window_ms, start_ms)
+        params = {**base_params, "startTime": str(win_start), "endTime": str(end)}
+        rows, meta = await _get_all_pages(client, path, params, api_key, secret, passphrase)
+
+        combined["pages_fetched"] += meta["pages_fetched"]
+        combined["last_code"] = meta["last_code"]
+        combined["last_msg"] = meta["last_msg"]
+        if combined["first_response"] is None:
+            combined["first_response"] = meta.get("first_response")
+
+        if meta.get("error"):
+            combined["error"] = meta["error"]
+            break
+
+        combined["windows_fetched"] += 1
+        all_rows.extend(rows)
+        end = win_start - 1  # next window ends just before this one started
+
+    return all_rows, combined
 
 
 async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
@@ -135,58 +149,70 @@ async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
     """
     Return net investment = total deposits - total withdrawals for coin.
 
-    Primary path: deposit-records endpoint.
-    Fallback: spot account bills (if deposit-records returns 400172).
+    Bitget enforces a 90-day max window per request, so we walk backwards
+    in 85-day chunks covering 2 years.
+
+    Primary deposit source: deposit-records (no coin filter — 400172 if coin= passed).
+    Fallback: spot account bills (if deposit-records returns a non-range error).
     """
     now_ms = int(time.time() * 1000)
-    start_ms = now_ms - 5 * 365 * 24 * 3600 * 1000
+    # 2 years back covers all realistic deposit history
+    start_ms = now_ms - 2 * 365 * 24 * 3600 * 1000
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Run deposit-records and withdrawal-records in parallel
+    async with httpx.AsyncClient(timeout=60) as client:
+        # Run deposit-records and withdrawal-records concurrently
         (deposits_all, dep_meta), (withdrawals, wdw_meta) = await asyncio.gather(
-            _get_all_pages(client, "/api/v2/spot/wallet/deposit-records",
-                           {"startTime": str(start_ms), "endTime": str(now_ms)},
-                           api_key, secret, passphrase),
-            _get_all_pages(client, "/api/v2/spot/wallet/withdrawal-records",
-                           {"coin": coin}, api_key, secret, passphrase),
+            _get_windowed(client, "/api/v2/spot/wallet/deposit-records",
+                          {},  # no coin filter — 400172 if coin= passed
+                          api_key, secret, passphrase, start_ms, now_ms),
+            _get_windowed(client, "/api/v2/spot/wallet/withdrawal-records",
+                          {"coin": coin},
+                          api_key, secret, passphrase, start_ms, now_ms),
         )
 
         bills_meta = None
         bills_rows: list[dict] = []
 
-        # If deposit-records fails (common 400172), fall back to spot account bills
-        if dep_meta.get("last_code") == "400172" or dep_meta.get("error"):
-            logger.info("deposit-records failed (%s), trying spot account bills",
-                        dep_meta.get("last_code"))
-            dep_total, bills_meta, bills_rows = await _fetch_bills_deposits(
-                client, coin, api_key, secret, passphrase, start_ms, now_ms
+        # Fall back to spot account bills if deposit-records has a non-range error
+        dep_error_code = dep_meta.get("last_code") or ""
+        if dep_meta.get("error") and dep_error_code not in ("00000", "0", "200", "00001"):
+            logger.info("deposit-records failed (%s), trying spot account bills", dep_error_code)
+            bills_rows, bills_meta = await _get_windowed(
+                client, "/api/v2/spot/account/bills",
+                {"coin": coin, "bizType": "deposit"},
+                api_key, secret, passphrase, start_ms, now_ms,
             )
-            dep_source = "bills"
-            dep_all_coins = list({str(r.get("coin", "")) for r in bills_rows})
-            deposits_for_count = bills_rows
-            dep_sample = bills_rows[:3]
-            dep_success_count = len(bills_rows)  # bills entries are always final
-        else:
-            dep_source = "deposit-records"
-            dep_all_coins = list({str(r.get("coin", "")) for r in deposits_all})
-            # Prefix match: catches USDT-TRC20, USDT-ERC20 etc.
-            deposits_filtered = [r for r in deposits_all
-                                  if str(r.get("coin", "")).upper().startswith(coin.upper())]
-            dep_success = [r for r in deposits_filtered if _is_success(r)]
-            dep_total = sum(_row_amount(r) for r in dep_success)
-            deposits_for_count = deposits_filtered
-            dep_sample = deposits_all[:3]
-            dep_success_count = len(dep_success)
+
+    dep_source = "deposit-records"
+    dep_all_coins = list({str(r.get("coin", "")) for r in deposits_all})
+
+    if bills_rows:
+        # Bills fallback: all ledger entries are final, no status check needed
+        dep_source = "bills"
+        dep_total = sum(abs(_row_amount(r)) for r in bills_rows)
+        deposits_for_count = bills_rows
+        dep_success_count = len(bills_rows)
+        dep_sample = bills_rows[:3]
+        dep_statuses: list = []
+    else:
+        # Prefix match: catches USDT-TRC20, USDT-ERC20 etc.
+        deposits_filtered = [r for r in deposits_all
+                              if str(r.get("coin", "")).upper().startswith(coin.upper())]
+        dep_success = [r for r in deposits_filtered if _is_success(r)]
+        dep_total = sum(_row_amount(r) for r in dep_success)
+        deposits_for_count = deposits_filtered
+        dep_success_count = len(dep_success)
+        dep_sample = deposits_all[:3]
+        dep_statuses = list({str(r.get("status", "")) for r in deposits_filtered})
 
     wdw_success = [r for r in withdrawals if _is_success(r)]
     wdw_total = sum(_row_amount(r) for r in wdw_success)
-
-    dep_statuses = list({str(r.get("status", "")) for r in deposits_for_count})
     wdw_statuses = list({str(r.get("status", "")) for r in withdrawals})
 
     logger.info(
-        "Investment fetch [%s]: dep_total=%.2f (%d records) wdw_total=%.2f (%d/%d success)",
+        "Investment [%s]: dep=%.2f (%d records, %d windows) wdw=%.2f (%d/%d success)",
         dep_source, dep_total, len(deposits_for_count),
+        dep_meta.get("windows_fetched", 0),
         wdw_total, len(wdw_success), len(withdrawals),
     )
 
@@ -199,12 +225,12 @@ async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
         "deposit_success_count": dep_success_count,
         "withdrawal_success_count": len(wdw_success),
         "coin": coin,
-        "_dep_source": dep_source,                  # which endpoint gave us deposits
+        "_dep_source": dep_source,
         "_dep_statuses": dep_statuses,
         "_wdw_statuses": wdw_statuses,
         "_dep_meta": dep_meta,
         "_wdw_meta": wdw_meta,
-        "_bills_meta": bills_meta,                  # set if bills fallback was used
+        "_bills_meta": bills_meta,
         "_dep_all_coins": dep_all_coins,
         "_dep_raw_count": len(deposits_all),
         "_dep_sample": dep_sample,
