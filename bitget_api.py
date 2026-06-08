@@ -58,7 +58,8 @@ async def _get_all_pages(client: httpx.AsyncClient, path: str, base_params: dict
     """
     rows: list[dict] = []
     cursor: str | None = None
-    meta: dict = {"pages_fetched": 0, "last_code": None, "last_msg": None, "error": None}
+    meta: dict = {"pages_fetched": 0, "last_code": None, "last_msg": None, "error": None,
+                  "first_response": None}
 
     for _ in range(max_pages):
         params = {**base_params, "limit": "100"}
@@ -77,6 +78,9 @@ async def _get_all_pages(client: httpx.AsyncClient, path: str, base_params: dict
         code = str(resp_body.get("code", ""))
         meta["last_code"] = code
         meta["last_msg"] = resp_body.get("msg")
+        if meta["first_response"] is None:
+            # Store trimmed first response for diagnostics (data truncated to save space)
+            meta["first_response"] = {k: v for k, v in resp_body.items() if k != "data"}
 
         if code not in ("00000", "0", "200"):
             meta["error"] = f"code={code} msg={resp_body.get('msg')}"
@@ -106,21 +110,45 @@ async def _get_all_pages(client: httpx.AsyncClient, path: str, base_params: dict
     return rows, meta
 
 
+def _diagnose_dep(meta: dict, raw_count: int) -> str:
+    code = meta.get("last_code")
+    if code == "400172":
+        return (
+            "API returned 400172 (Parameter verification failed). "
+            "Likely fix: go to Bitget → API Management → edit your key → "
+            "enable 'Spot' read permission (Wallet/Transfer). "
+            "Alternatively your account may have no on-chain deposit records "
+            "(P2P/bank top-ups don't appear here)."
+        )
+    if meta.get("error"):
+        return f"API error: {meta['error']}"
+    if raw_count == 0:
+        return "API succeeded but returned 0 records — account may be funded via P2P/internal transfer."
+    return "ok"
+
+
 async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
                                 coin: str = "USDT") -> dict:
     """
     Return net investment = total deposits - total withdrawals for coin.
     Only counts records with a success/completed status.
 
-    Note: deposit-records rejects a coin= filter (400172) so we fetch all
-    coins and filter client-side. withdrawal-records accepts coin= fine.
+    Notes:
+    - deposit-records rejects coin= (400172); fetch all and filter client-side.
+    - Some Bitget endpoints require startTime/endTime; we pass a 5-year window.
+    - If 400172 persists, the API key may be missing Spot/Wallet read permission.
     """
+    # 5-year window in ms (Bitget requires range on some endpoints)
+    now_ms = int(time.time() * 1000)
+    start_ms = now_ms - 5 * 365 * 24 * 3600 * 1000
+
     async with httpx.AsyncClient(timeout=20) as client:
-        # Deposits: no coin filter — Bitget returns 400172 if coin= is passed
+        # Deposits: no coin filter (400172 if coin= passed); use time range
         # Withdrawals: coin filter works fine
         (deposits_all, dep_meta), (withdrawals, wdw_meta) = await asyncio.gather(
             _get_all_pages(client, "/api/v2/spot/wallet/deposit-records",
-                           {}, api_key, secret, passphrase),
+                           {"startTime": str(start_ms), "endTime": str(now_ms)},
+                           api_key, secret, passphrase),
             _get_all_pages(client, "/api/v2/spot/wallet/withdrawal-records",
                            {"coin": coin}, api_key, secret, passphrase),
         )
@@ -169,4 +197,6 @@ async def fetch_net_investment(api_key: str, secret: str, passphrase: str,
         "_dep_raw_count": len(deposits_all),    # total deposits before coin filter
         "_dep_sample": deposits_all[:3],        # first 3 raw deposit records
         "_wdw_sample": withdrawals[:3],         # first 3 raw withdrawal records
+        # Human-readable diagnosis when deposit API fails
+        "_dep_diagnosis": _diagnose_dep(dep_meta, len(deposits_all)),
     }
