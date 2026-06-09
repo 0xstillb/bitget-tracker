@@ -1216,17 +1216,18 @@
         ccNote.style.display = 'none';
       }
 
-      // Stopped copies card
-      const scSec = document.getElementById('stopped-copies-section');
+      // Stopped copies card — always visible so user can tap to enter value
+      document.getElementById('stopped-copies-section').style.display = 'block';
+      const pnlEl = document.getElementById('stopped-copies-pnl');
       if (ccPnl != null && Math.abs(ccPnl) >= 0.01) {
-        scSec.style.display = 'block';
-        const pnlEl = document.getElementById('stopped-copies-pnl');
         pnlEl.textContent = fmt(ccPnl);
         pnlEl.className = 'trader-metric-val ' + (ccPnl >= 0 ? 'green' : 'red');
         const badge = document.getElementById('stopped-copies-badge');
         badge.textContent = (ccCount > 0 ? ccCount : '?') + ' COPI' + (ccCount === 1 ? 'Y' : 'ES');
       } else {
-        scSec.style.display = 'none';
+        pnlEl.textContent = '—';
+        pnlEl.className = 'trader-metric-val';
+        document.getElementById('stopped-copies-badge').textContent = 'TAP TO SET';
       }
 
       renderPositions(positions);
