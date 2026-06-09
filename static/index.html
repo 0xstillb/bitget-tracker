@@ -516,10 +516,7 @@
           <!-- Earn balance row — shown only when API credentials set and earn > 0 -->
           <div id="earn-section" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
             <div style="display:flex;align-items:center;justify-content:space-between">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);font-weight:600">Earn</span>
-                <span id="earn-apr-badge" style="display:none;font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);background:rgba(0,196,122,0.10);padding:1px 6px;border-radius:999px"></span>
-              </div>
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);font-weight:600">Earn</span>
               <div id="earn-balance" style="font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green)">—</div>
             </div>
           </div>
@@ -1030,13 +1027,6 @@
       sec.style.display = 'block';
       document.getElementById('earn-balance').textContent =
         '$' + earn.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const aprBadge = document.getElementById('earn-apr-badge');
-      if (earn.apr != null) {
-        aprBadge.textContent = earn.apr.toFixed(2) + '% APR';
-        aprBadge.style.display = 'inline-block';
-      } else {
-        aprBadge.style.display = 'none';
-      }
     } catch(e) { console.error('fetchEarn', e); }
   }
 
