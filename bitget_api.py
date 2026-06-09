@@ -256,110 +256,94 @@ def _parse_earn_apr(it: dict) -> float | None:
 
 async def fetch_earn_balance(api_key: str, secret: str, passphrase: str) -> dict:
     """
-    Return earn (savings/flexible) balance and weighted APR.
-
-    Strategy:
-    1. GET /api/v2/earn/savings/assets  → data.resultList (per-position with APR)
-    2. GET /api/v2/earn/savings/account → flat totals + 24h earnings for APR estimate
+    Return earn balance + interest data by calling both endpoints concurrently:
+    - savings/assets  → balance (resultList)
+    - savings/account → 24h interest and cumulative interest
     """
+    path_assets = "/api/v2/earn/savings/assets"
+    path_acct   = "/api/v2/earn/savings/account"
+
     async with httpx.AsyncClient(timeout=30) as client:
-        probes: list[dict] = []
-
-        # ── 1. Per-position detail ────────────────────────────────────────────
-        path_assets = "/api/v2/earn/savings/assets"
-        hdrs = _auth_headers("GET", path_assets, "", api_key, secret, passphrase)
+        hdrs_a = _auth_headers("GET", path_assets, "", api_key, secret, passphrase)
+        hdrs_b = _auth_headers("GET", path_acct,   "", api_key, secret, passphrase)
         try:
-            r = await client.get(BITGET_API_BASE + path_assets, headers=hdrs)
-            body = r.json()
-            code = str(body.get("code", ""))
-            data = body.get("data") or {}
-            data_keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-            probes.append({"path": path_assets, "http": r.status_code,
-                           "code": code, "msg": body.get("msg"), "data_keys": data_keys})
-
-            if code in ("00000", "0", "200") and isinstance(data, dict):
-                # resultList is the confirmed key name from probe diagnostics
-                items = (data.get("resultList") or data.get("list") or
-                         data.get("assets") or data.get("rows") or [])
-                parsed = []
-                for it in items:
-                    if not isinstance(it, dict):
-                        continue
-                    coin = str(it.get("productCoin") or it.get("coinName") or
-                               it.get("coin") or "")
-                    amt = 0.0
-                    for f in ("holdAmount", "amount", "totalAmount", "principal",
-                              "holdingAmount", "currentAmount", "holdSize"):
-                        v = it.get(f)
-                        if v not in (None, "", "0", 0):
-                            try:
-                                amt = float(v); break
-                            except (TypeError, ValueError):
-                                pass
-                    if amt <= 0:
-                        continue
-                    apr = _parse_earn_apr(it)
-                    parsed.append({"coin": coin, "amount": round(amt, 4), "apr": apr})
-
-                if parsed:
-                    total = sum(p["amount"] for p in parsed)
-                    apr_items = [p for p in parsed if p["apr"] is not None]
-                    weighted_apr = None
-                    if apr_items:
-                        w = sum(p["amount"] for p in apr_items)
-                        if w > 0:
-                            weighted_apr = round(
-                                sum(p["amount"] * p["apr"] for p in apr_items) / w, 2)
-                    logger.info("Earn[assets]: total=%.2f items=%d apr=%s",
-                                total, len(parsed), weighted_apr)
-                    return {"total": round(total, 2), "items": parsed,
-                            "apr": weighted_apr, "source": path_assets,
-                            "error": None, "_probes": probes}
+            ra, rb = await asyncio.gather(
+                client.get(BITGET_API_BASE + path_assets, headers=hdrs_a),
+                client.get(BITGET_API_BASE + path_acct,   headers=hdrs_b),
+            )
+            ba, bb = ra.json(), rb.json()
         except Exception as exc:
-            probes.append({"path": path_assets, "error": str(exc)})
-            logger.warning("Earn API %s: %s", path_assets, exc)
+            logger.warning("Earn API fetch error: %s", exc)
+            return {"total": 0.0, "items": [], "apr": None,
+                    "interest_24h": None, "total_interest": None,
+                    "source": None, "error": str(exc)}
 
-        # ── 2. Account summary fallback ───────────────────────────────────────
-        path_acct = "/api/v2/earn/savings/account"
-        hdrs = _auth_headers("GET", path_acct, "", api_key, secret, passphrase)
-        try:
-            r = await client.get(BITGET_API_BASE + path_acct, headers=hdrs)
-            body = r.json()
-            code = str(body.get("code", ""))
-            data = body.get("data") or {}
-            probes.append({"path": path_acct, "http": r.status_code,
-                           "code": code, "msg": body.get("msg"),
-                           "data_preview": str(data)[:200]})
+        # ── Balance from savings/assets ───────────────────────────────────────
+        total = 0.0
+        items: list[dict] = []
+        code_a = str(ba.get("code", ""))
+        data_a = ba.get("data") or {}
+        if code_a in ("00000", "0", "200") and isinstance(data_a, dict):
+            rows = (data_a.get("resultList") or data_a.get("list") or
+                    data_a.get("assets") or data_a.get("rows") or [])
+            for it in rows:
+                if not isinstance(it, dict):
+                    continue
+                coin = str(it.get("productCoin") or it.get("coinName") or it.get("coin") or "")
+                amt = 0.0
+                for f in ("holdAmount", "amount", "totalAmount", "principal",
+                          "holdingAmount", "currentAmount", "holdSize"):
+                    v = it.get(f)
+                    if v not in (None, "", "0", 0):
+                        try:
+                            amt = float(v); break
+                        except (TypeError, ValueError):
+                            pass
+                if amt > 0:
+                    items.append({"coin": coin, "amount": round(amt, 4)})
+            total = sum(p["amount"] for p in items)
 
-            if code in ("00000", "0", "200") and isinstance(data, dict):
-                usdt = 0.0
+        # ── Interest from savings/account ─────────────────────────────────────
+        interest_24h: float | None = None
+        total_interest: float | None = None
+        code_b = str(bb.get("code", ""))
+        data_b = bb.get("data") or {}
+        if code_b in ("00000", "0", "200") and isinstance(data_b, dict):
+            for f in ("usdt24hEarning", "24hEarning", "dailyEarning", "earningAmount"):
+                v = data_b.get(f)
+                if v not in (None, ""):
+                    try:
+                        interest_24h = round(float(v), 6); break
+                    except (TypeError, ValueError):
+                        pass
+            for f in ("usdtTotalEarning", "totalEarning", "totalInterest",
+                      "accruedInterest", "cumulativeEarning"):
+                v = data_b.get(f)
+                if v not in (None, ""):
+                    try:
+                        total_interest = round(float(v), 4); break
+                    except (TypeError, ValueError):
+                        pass
+            # Fall back to balance from account if assets call failed
+            if not items:
                 for f in ("usdtAmount", "totalUsdtAmount", "amount", "totalAmount"):
-                    v = data.get(f)
+                    v = data_b.get(f)
                     if v not in (None, "", "0"):
                         try:
-                            usdt = float(v); break
+                            total = float(v)
+                            items = [{"coin": "USDT", "amount": round(total, 4)}]
+                            break
                         except (TypeError, ValueError):
                             pass
-                # Estimate APR from 24h earnings: (earning/principal) * 365 * 100
-                apr = None
-                earning_24h = 0.0
-                for f in ("usdt24hEarning", "earningAmount", "interestAmount",
-                          "24hEarning", "dailyEarning"):
-                    v = data.get(f)
-                    if v not in (None, ""):
-                        try:
-                            earning_24h = float(v); break
-                        except (TypeError, ValueError):
-                            pass
-                if usdt > 0 and earning_24h > 0:
-                    apr = round(earning_24h / usdt * 365 * 100, 2)
-                items = [{"coin": "USDT", "amount": round(usdt, 4), "apr": apr}] if usdt > 0 else []
-                logger.info("Earn[account]: usdt=%.2f apr=%s", usdt, apr)
-                return {"total": round(usdt, 2), "items": items, "apr": apr,
-                        "source": path_acct, "error": None, "_probes": probes}
-        except Exception as exc:
-            probes.append({"path": path_acct, "error": str(exc)})
-            logger.warning("Earn API %s: %s", path_acct, exc)
 
-    return {"total": 0.0, "items": [], "apr": None, "source": None,
-            "error": "no earn endpoint returned data", "_probes": probes}
+        logger.info("Earn: total=%.2f interest_24h=%s total_interest=%s",
+                    total, interest_24h, total_interest)
+        return {
+            "total": round(total, 2),
+            "items": items,
+            "apr": None,
+            "interest_24h": interest_24h,
+            "total_interest": total_interest,
+            "source": path_assets if items else path_acct,
+            "error": None if (total > 0 or interest_24h is not None) else "no balance found",
+        }

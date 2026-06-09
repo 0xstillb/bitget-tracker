@@ -1055,12 +1055,12 @@ async def get_earn():
     data = _earn["data"] or {}
     return {
         "total": data.get("total", 0.0),
-        "apr": data.get("apr"),
         "items": data.get("items", []),
+        "interest_24h": data.get("interest_24h"),
+        "total_interest": data.get("total_interest"),
         "fetched_at": _earn["fetched_at"],
         "error": _earn["error"],
         "has_credentials": creds is not None,
-        "_probes": data.get("_probes", []),
     }
 
 

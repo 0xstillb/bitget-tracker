@@ -590,8 +590,8 @@
       <div id="traders-cards"></div>
     </div>
 
-    <!-- Earn card — same style as trader rows -->
-    <div id="earn-section" style="display:none;border-top:1px solid var(--border)">
+    <!-- Earn card — same style as trader rows, no divider -->
+    <div id="earn-section" style="display:none">
       <div class="trader-row">
         <div>
           <div class="trader-name-row">
@@ -606,7 +606,8 @@
           </div>
         </div>
         <div class="trader-right">
-          <div class="trader-alltime-label">USDT</div>
+          <div class="trader-alltime-label" id="earn-interest-label" style="display:none"></div>
+          <div class="trader-alltime green" id="earn-interest" style="display:none"></div>
         </div>
       </div>
     </div>
@@ -1033,14 +1034,31 @@
     } catch(e) { console.error('fetchInvestment', e); }
   }
 
+  let _earnTotal = 0;
+
   async function fetchEarn() {
     try {
       const earn = await fetch('/api/earn').then(r => r.json());
       const sec = document.getElementById('earn-section');
-      if (!earn.has_credentials || !earn.total) { sec.style.display = 'none'; return; }
+      if (!earn.has_credentials || !earn.total) { sec.style.display = 'none'; _earnTotal = 0; return; }
       sec.style.display = 'block';
+      _earnTotal = earn.total || 0;
       document.getElementById('earn-balance').textContent =
         '$' + earn.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      // Interest display — prefer total earned, fall back to 24h
+      const intEl    = document.getElementById('earn-interest');
+      const intLabel = document.getElementById('earn-interest-label');
+      if (earn.total_interest != null && earn.total_interest > 0) {
+        intLabel.textContent = 'TOTAL EARNED';
+        intEl.textContent    = '+$' + earn.total_interest.toFixed(4);
+        intLabel.style.display = ''; intEl.style.display = '';
+      } else if (earn.interest_24h != null && earn.interest_24h > 0) {
+        intLabel.textContent = '24H EARNED';
+        intEl.textContent    = '+$' + earn.interest_24h.toFixed(6);
+        intLabel.style.display = ''; intEl.style.display = '';
+      } else {
+        intLabel.style.display = 'none'; intEl.style.display = 'none';
+      }
     } catch(e) { console.error('fetchEarn', e); }
   }
 
@@ -1062,16 +1080,16 @@
       lastFetchTime = Date.now();
       startAgeTicker();
 
-      // Balance
-      document.getElementById('total-balance').textContent = fmtBal(mt5.total_balance);
+      // Balance — add earn total (updated by fetchEarn, defaults to 0)
+      const displayBalance = (mt5.total_balance || 0) + _earnTotal;
+      document.getElementById('total-balance').textContent = fmtBal(displayBalance);
       document.getElementById('total-investment').textContent = fmtBal(mt5.total_investment);
 
-      // Return % — (balance−invested)/invested includes unrealized open PnL
-      // ALL-TIME badge uses all_time_pnl/invested (realized only) — intentionally different
-      const _base = (mt5.total_investment > 0) ? mt5.total_investment : mt5.total_balance;
-      if (mt5.total_balance && _base > 0) {
+      // Return % — uses displayBalance (includes earn) vs invested
+      const _base = (mt5.total_investment > 0) ? mt5.total_investment : displayBalance;
+      if (displayBalance && _base > 0) {
         const ret = mt5.total_investment > 0
-          ? (mt5.total_balance - mt5.total_investment) / mt5.total_investment * 100
+          ? (displayBalance - mt5.total_investment) / mt5.total_investment * 100
           : 100;
         const retEl = document.getElementById('return-pct');
         retEl.textContent = (ret >= 0 ? '+' : '') + ret.toFixed(2) + '%';
@@ -1082,9 +1100,9 @@
       // Goal ring
       const goalTarget = parseFloat(localStorage.getItem('goal_target') || '33000');
       const ringWrap = document.getElementById('goal-ring-wrap');
-      if (goalTarget > 0 && mt5.total_balance != null) {
+      if (goalTarget > 0 && displayBalance) {
         const CIRC = 251.33;
-        const ratio = Math.min(mt5.total_balance / goalTarget, 1);
+        const ratio = Math.min(displayBalance / goalTarget, 1);
         const ringFill = document.getElementById('goal-ring-fill');
         const ringPct  = document.getElementById('goal-ring-pct');
         const ringRem  = document.getElementById('goal-remaining');
@@ -1096,7 +1114,7 @@
           ringRem.style.color = 'var(--green)';
         } else {
           ringFill.classList.remove('reached');
-          const left = goalTarget - mt5.total_balance;
+          const left = goalTarget - displayBalance;
           ringRem.textContent = '$' + left.toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' left';
           ringRem.style.color = '';
         }
