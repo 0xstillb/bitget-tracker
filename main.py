@@ -476,9 +476,9 @@ def _push_data(kind: str, data, trader: str = None):
                         changed = True
                     except (TypeError, ValueError):
                         pass
-            for key in ("profitShareAmount", "profitSharingAmount", "totalProfitShare",
-                        "paidProfitShare", "realizedProfitShare", "settledProfitShare",
-                        "profitShare", "shareAmount"):
+            for key in ("sharedProfit", "profitShareAmount", "profitSharingAmount",
+                        "totalProfitShare", "paidProfitShare", "realizedProfitShare",
+                        "settledProfitShare", "profitShare", "shareAmount"):
                 if key in data:
                     try:
                         ts["profit_share"] = round(abs(float(data[key])), 2)
