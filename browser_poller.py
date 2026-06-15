@@ -188,22 +188,31 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
             await page.route("**/*", _block)
             _status["browser_alive"] = True
 
-            # Warm-up: visit /about for Cloudflare bypass, then CFD portfolio pages
-            # to seed CFD-specific cookies. Futures-center pages are intentionally
-            # skipped — navigating there triggers CF bot-detection that blocks all
-            # subsequent /v1/trace/future/... API calls with 403.
-            warmup_pages = ["/about"]
+            # Phase 1: /about warmup only (Cloudflare bypass).
+            # Probe open positions immediately after — this is the fastest-changing
+            # data so we want it as early as possible in the cycle.
+            try:
+                await page.goto(f"{BITGET_BASE}/about",
+                                wait_until="domcontentloaded", timeout=30_000)
+                logger.info("Warm-up nav OK: /about")
+            except Exception as e:
+                logger.info("Warm-up nav /about: %s", e)
+
+            await _probe_positions(page, push_fn, traders, trader_types)
+
+            # Phase 2: navigate to each CFD portfolio page to seed CFD-specific
+            # cookies needed for balance / history API calls.
+            # Futures-center pages are intentionally skipped — navigating there
+            # triggers CF bot-detection that blocks /v1/trace/future/... with 403.
             for tname, pid in traders.items():
-                ttype = trader_types.get(tname, "cfd")
-                if ttype == "cfd":
-                    warmup_pages.append(f"/copy-trading/cfd-center/my-portfolio/{pid}")
-            for path in warmup_pages:
-                try:
-                    await page.goto(f"{BITGET_BASE}{path}",
-                                    wait_until="domcontentloaded", timeout=30_000)
-                    logger.info("Warm-up nav OK: %s", path)
-                except Exception as e:
-                    logger.info("Warm-up nav %s: %s", path, e)
+                if trader_types.get(tname, "cfd") == "cfd":
+                    path = f"/copy-trading/cfd-center/my-portfolio/{pid}"
+                    try:
+                        await page.goto(f"{BITGET_BASE}{path}",
+                                        wait_until="domcontentloaded", timeout=30_000)
+                        logger.info("Warm-up nav OK: %s", path)
+                    except Exception as e:
+                        logger.info("Warm-up nav %s: %s", path, e)
 
             await _active_poll(page, push_fn, traders, trader_types)
             await _fetch_balance(page, push_fn, traders, trader_types)
@@ -213,63 +222,75 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
             await browser.close()
 
 
+# ── Positions probe (runs early, right after /about warmup) ──────────────────
+
+async def _probe_positions(page, push_fn: Callable,
+                           traders: dict[str, str], trader_types: dict[str, str]):
+    """Probe open positions as early as possible in the poll cycle.
+
+    Called right after the /about Cloudflare warmup, before the heavier
+    portfolio-page navigation.  tracePosition typically works without the
+    portfolio-page cookie, so this gets position data ~15-20 s earlier than
+    if we waited for the full warmup sequence.
+    """
+    cfd_pids = [p for n, p in traders.items() if trader_types.get(n, "cfd") == "cfd"]
+    if not cfd_pids:
+        return
+    pid0 = cfd_pids[0]
+    pos_probes = []
+    pos_found = False
+    for ep in [
+        "/v1/trace/mt5/data/tracePosition",       # confirmed 200+rows
+        "/v1/trace/mt5/trace/getFollowOpenPosition",
+        "/v1/trace/mt5/trace/myFollowOpenPosition",
+        "/v1/trace/mt5/trace/getFollowOpenOrder",
+    ]:
+        if pos_found:
+            break
+        for label, body in [("portfolioId", {"portfolioId": pid0}),
+                             ("followId", {"followPortfolioId": pid0}),
+                             ("empty", {})]:
+            try:
+                result = await page.evaluate("""async ([ep, body]) => {
+                    try {
+                        const r = await fetch(ep, {
+                            method: 'POST', credentials: 'include',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(body),
+                        });
+                        const text = await r.text();
+                        if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
+                        const j = JSON.parse(text);
+                        const d = j?.data;
+                        const rows = Array.isArray(d) ? d : (d?.list || d?.rows || d?.positions || []);
+                        return {status: r.status, code: j?.code, msg: j?.msg,
+                                data: j?.data,
+                                data_type: Array.isArray(d) ? 'array' : typeof d,
+                                data_keys: d != null ? Object.keys(Object(d)).slice(0,8) : null,
+                                row_count: rows.length};
+                    } catch(e) { return {status: 0, error: String(e)}; }
+                }""", [ep, body])
+                code = result.get("code") if isinstance(result, dict) else None
+                pos_probes.append({"ep": ep, "body": label, "status": result.get("status"),
+                                   "code": code, "rows": result.get("row_count"),
+                                   "error": result.get("error")})
+                if isinstance(result, dict) and result.get("status") == 200 and code in ("00000", "200", "0"):
+                    logger.info("CFD positions found ep=%s body=%s rows=%s",
+                                ep, label, result.get("row_count"))
+                    push_fn("positions", result.get("data") or {})
+                    pos_found = True
+                    break
+            except Exception as ex:
+                pos_probes.append({"ep": ep, "body": label, "error": str(ex)})
+    _status["last_pos_response"] = pos_probes[0] if pos_probes else {}
+    _status["last_pos_probes"] = pos_probes
+
+
 # ── History polling ───────────────────────────────────────────────────────────
 
 async def _active_poll(page, push_fn: Callable,
                        traders: dict[str, str], trader_types: dict[str, str]):
-    logger.info("Polling APIs via page.evaluate... traders=%s", list(traders.keys()))
-
-    # CFD open-positions probe — try multiple endpoints and body variants
-    cfd_pids = [p for n, p in traders.items() if trader_types.get(n, "cfd") == "cfd"]
-    if cfd_pids:
-        pid0 = cfd_pids[0]
-        pos_probes = []
-        pos_found = False
-        for ep in [
-            "/v1/trace/mt5/data/tracePosition",       # confirmed 200+rows
-            "/v1/trace/mt5/trace/getFollowOpenPosition",
-            "/v1/trace/mt5/trace/myFollowOpenPosition",
-            "/v1/trace/mt5/trace/getFollowOpenOrder",
-        ]:
-            if pos_found:
-                break
-            for label, body in [("portfolioId", {"portfolioId": pid0}),
-                                 ("followId", {"followPortfolioId": pid0}),
-                                 ("empty", {})]:
-                try:
-                    result = await page.evaluate("""async ([ep, body]) => {
-                        try {
-                            const r = await fetch(ep, {
-                                method: 'POST', credentials: 'include',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify(body),
-                            });
-                            const text = await r.text();
-                            if (text.trimStart().startsWith('<')) return {status: r.status, error: 'html_redirect'};
-                            const j = JSON.parse(text);
-                            const d = j?.data;
-                            const rows = Array.isArray(d) ? d : (d?.list || d?.rows || d?.positions || []);
-                            return {status: r.status, code: j?.code, msg: j?.msg,
-                                    data: j?.data,
-                                    data_type: Array.isArray(d) ? 'array' : typeof d,
-                                    data_keys: d != null ? Object.keys(Object(d)).slice(0,8) : null,
-                                    row_count: rows.length};
-                        } catch(e) { return {status: 0, error: String(e)}; }
-                    }""", [ep, body])
-                    code = result.get("code") if isinstance(result, dict) else None
-                    pos_probes.append({"ep": ep, "body": label, "status": result.get("status"),
-                                       "code": code, "rows": result.get("row_count"),
-                                       "error": result.get("error")})
-                    if isinstance(result, dict) and result.get("status") == 200 and code in ("00000", "200", "0"):
-                        logger.info("CFD positions found ep=%s body=%s rows=%s",
-                                    ep, label, result.get("row_count"))
-                        push_fn("positions", result.get("data") or {})
-                        pos_found = True
-                        break
-                except Exception as ex:
-                    pos_probes.append({"ep": ep, "body": label, "error": str(ex)})
-        _status["last_pos_response"] = pos_probes[0] if pos_probes else {}
-        _status["last_pos_probes"] = pos_probes
+    logger.info("Polling history/balance via page.evaluate... traders=%s", list(traders.keys()))
 
     # History per trader, branching on type
     for trader_name, pid in traders.items():
