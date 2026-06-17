@@ -1394,13 +1394,13 @@ async def export_poller_cookie(request: Request):
     local script) can load it, renew the Bitget session, and POST it back.
 
     Disabled unless COOKIE_SYNC_TOKEN is set. The caller must present the same
-    token via the X-Sync-Token header or ?token= query param. The cookie is a
-    live session secret, so we never log it and never expose it without a token.
+    token via the X-Sync-Token header. Header-only: query params appear in
+    server access logs and browser history — never put secrets there.
     """
     expected = os.environ.get("COOKIE_SYNC_TOKEN", "")
     if not expected:
         return JSONResponse({"ok": False, "error": "export disabled"}, status_code=404)
-    provided = request.headers.get("x-sync-token") or request.query_params.get("token") or ""
+    provided = request.headers.get("x-sync-token") or ""
     if not _constant_time_eq(provided, expected):
         return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=403)
     from browser_poller import _load_cookie_string

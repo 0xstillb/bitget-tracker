@@ -20,15 +20,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to commit SHA (v4.2.2) — prevents silent tag-moves.
+      # Verify at: https://github.com/actions/checkout/tags
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af68 # v4.2.2
 
-      - uses: actions/setup-node@v4
+      # Pinned to commit SHA (v4.3.0).
+      # Verify at: https://github.com/actions/setup-node/tags
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3e7bde3d79 # v4.3.0
         with:
           node-version: 20
 
       - name: Install headless deps
         working-directory: headless
-        run: npm install --no-audit --no-fund
+        # npm ci installs exact versions from package-lock.json — no floating
+        # semver resolution, so a compromised patch release can't sneak in.
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Refresh and push cookie
         working-directory: headless
