@@ -292,12 +292,21 @@ async def _probe_positions(page, push_fn: Callable,
                     } catch(e) { return {status: 0, error: String(e)}; }
                 }""", [ep, body])
                 code = result.get("code") if isinstance(result, dict) else None
+                msg  = (result.get("msg") or "") if isinstance(result, dict) else ""
                 pos_probes.append({"ep": ep, "body": label, "status": result.get("status"),
-                                   "code": code, "rows": result.get("row_count"),
+                                   "code": code, "msg": msg or None,
+                                   "rows": result.get("row_count"),
                                    "error": result.get("error")})
                 if isinstance(result, dict) and result.get("status") == 200:
-                    # Any 200 proves the cookie is alive — update scrape timer now
-                    # regardless of whether positions were returned.
+                    msg_lower = msg.lower()
+                    if "expired" in msg_lower or ("log" in msg_lower and "in" in msg_lower):
+                        # Bitget returns 200/00004 with this msg when the session
+                        # has expired — not a genuine "no positions" response.
+                        logger.info("CFD position probe: session expired (msg=%s)", msg)
+                        _status["auth_ok"] = False
+                        done = True
+                        break
+                    # 200 without expiry msg — cookie is alive
                     _status["auth_ok"] = True
                     _mark_scrape()
                     if code in ("00000", "200", "0"):
