@@ -358,11 +358,21 @@ def _parse_history_chart(trades: list[dict]) -> list[dict]:
         d = _ms_to_bkk_date(t["close_time_ms"]) if t["close_time_ms"] else None
         if d:
             day_pnl[d] += t["pnl"]
+    if not day_pnl:
+        return []
+    # Fill every calendar day so the chart has no invisible gaps for no-trade days.
+    today_str = datetime.now(BKK).strftime("%Y-%m-%d")
+    earliest = min(day_pnl)
+    current = datetime.strptime(earliest, "%Y-%m-%d").replace(tzinfo=BKK)
+    end = datetime.strptime(today_str, "%Y-%m-%d").replace(tzinfo=BKK)
     cumulative = 0.0
     result = []
-    for d in sorted(day_pnl):
-        cumulative += day_pnl[d]
-        result.append({"date": d, "pnl": round(day_pnl[d], 4), "cumulative_pnl": round(cumulative, 4)})
+    while current <= end:
+        d = current.strftime("%Y-%m-%d")
+        pnl = day_pnl.get(d, 0.0)
+        cumulative += pnl
+        result.append({"date": d, "pnl": round(pnl, 4), "cumulative_pnl": round(cumulative, 4)})
+        current += timedelta(days=1)
     return result
 
 

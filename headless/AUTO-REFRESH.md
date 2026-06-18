@@ -118,6 +118,13 @@ Check the logs under the **"Refresh and push cookie"** step:
 If the session has genuinely expired, the Action fails and GitHub sends you
 an email titled something like *"[dOHSI8/bitget-tracker] Run failed"*.
 
+> **Why you might not have received emails before:** Earlier versions of this
+> Action did not actually verify the cookie — they pushed it blindly and
+> exited with success even when the session was dead. The current version
+> calls a real Bitget endpoint to confirm auth before pushing. If the session
+> is dead, the Action now exits 1 → GitHub emails you. If you never saw
+> expiry emails before, that was the bug, not your notification settings.
+
 **Fix (takes ~2 minutes):**
 
 1. Re-paste a fresh cookie from Chrome DevTools (Step 4 above)
