@@ -228,8 +228,31 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
                     except Exception as e:
                         logger.info("Warm-up nav %s: %s", path, e)
 
-            await _active_poll(page, push_fn, traders, trader_types)
+                        await _active_poll(page, push_fn, traders, trader_types)
             await _fetch_balance(page, push_fn, traders, trader_types)
+
+            # Save all cookies (including HttpOnly like bt_newsessionid) back to
+            # cookies.json after each poll cycle.  The export endpoint serves this
+            # file to the GitHub Actions refresher, which needs bt_newsessionid to
+            # do a silent session-renewal.  document.cookie-style strings don't
+            # include HttpOnly cookies, so we must read them from the browser.
+            try:
+                all_cookies = await context.cookies()
+                full_str = "; ".join(
+                    f"{c['name']}={c['value']}"
+                    for c in all_cookies if c.get('name')
+                )
+                if full_str:
+                    COOKIES_FILE.write_text(json.dumps({
+                        "cookie": full_str,
+                        "updated": datetime.now(BKK).isoformat(),
+                        "count": len(all_cookies),
+                    }))
+                    logger.info("Saved %d cookies (incl. HttpOnly) -- bt_newsessionid=%s",
+                                len(all_cookies),
+                                any(c.get('name') == 'bt_newsessionid' for c in all_cookies))
+            except Exception as e:
+                logger.warning("Failed to save cookies: %s", e)
 
             logger.info("Poll cycle complete — closing browser")
         finally:
