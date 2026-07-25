@@ -324,8 +324,10 @@ def _parse_trades(raw: Any) -> list[dict]:
             ct = int(ct_raw)
             if 0 < ct < 10_000_000_000:
                 ct *= 1000
+            # NB: do NOT fall back to utime — that's Bitget's last-update time
+            # (≈ close time), which would report a bogus ~0 hold for every row.
             ot_raw = (h.get("openTime") or h.get("openedAt") or
-                      h.get("openTs") or h.get("otime") or h.get("utime") or 0)
+                      h.get("openTs") or h.get("otime") or 0)
             try:
                 ot = int(ot_raw)
             except (TypeError, ValueError):

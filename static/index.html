@@ -478,7 +478,8 @@
     body.hide-pnl :is(#total-balance,#total-investment,#daily-pnl,#open-pnl,#all-time-pnl,
       #inv-deposits,#inv-withdrawals,#inv-net,#goal-remaining,#goal-ring-pct,#daily-sub,
       #eo-balance,#eo-equity,#eo-pnl,.stat-val,.trader-metric-val,#trades-body,
-      #positions-body,#chart-canvas,#cal-day-detail,#perf-insights) {
+      #positions-body,#chart-canvas,#cal-day-detail,#perf-insights,
+      #perf-streak,#cal-body) {
       filter: blur(7px); }
   </style>
 </head>
@@ -1717,9 +1718,12 @@
   // ── Performance / calendar / insights (from /api/journal) ────
   let _journalAt = 0, _journalTrades = null, _calSelDay = null;
   const PERF_DAYS = 90;
-  const bkkDayStr  = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(ms);
-  const bkkDowStr  = ms => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Bangkok', weekday: 'short' }).format(ms);
-  const bkkHourNum = ms => +new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', hour: 'numeric', hour12: false }).format(ms);
+  // Cache the formatters — building Intl.DateTimeFormat per call (over every
+  // trade, every render/theme-toggle) is what made the dashboard janky.
+  const _fmtBkkDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' });
+  const _fmtBkkDow = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Bangkok', weekday: 'short' });
+  const bkkDayStr  = ms => _fmtBkkDay.format(ms);
+  const bkkDowStr  = ms => _fmtBkkDow.format(ms);
 
   async function fetchJournal(force) {
     if (!force && Date.now() - _journalAt < 5 * 60 * 1000) return;
@@ -1789,7 +1793,9 @@
 
   function renderCalHeatmap(byDay) {
     const body = document.getElementById('cal-body');
-    const WEEKS = 16;
+    // Match the data window (PERF_DAYS) — drawing more weeks than we have data
+    // for would paint real off-window days as false "no-trade" cells.
+    const WEEKS = Math.ceil(PERF_DAYS / 7);
     const today = new Date(bkkDayStr(Date.now()) + 'T12:00:00Z');
     const start = new Date(today.getTime() - (WEEKS * 7 - 1) * 864e5);
     start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7)); // back to Monday

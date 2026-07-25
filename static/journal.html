@@ -364,13 +364,15 @@ const state={
   filters:{preset:'90D', traders:[], symbols:[], side:'all', day:null},
   view:{basis:'net', unit:'$', hide:false},
   breakTab:'symbol', sort:{col:'time', dir:-1}, search:'',
-  showAll:false, hasOpenTimes:false, loaded:false,
+  showAll:false, loaded:false,
 };
 try{ const s=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
   if(s.filters) Object.assign(state.filters,s.filters);
   if(s.view) Object.assign(state.view,s.view);
   if(s.breakTab) state.breakTab=s.breakTab;
 }catch(e){}
+// Privacy mode is shared with the dashboard via the 'hidePnl' key.
+try{ if(localStorage.getItem('hidePnl')) state.view.hide=true; }catch(e){}
 const persist=()=>{ try{localStorage.setItem(LS_KEY,JSON.stringify(
   {filters:state.filters,view:state.view,breakTab:state.breakTab}))}catch(e){} };
 const REDUCED=matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -411,9 +413,14 @@ const fmtBKK_date=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bangkok'});   
 const fmtBKK_hm=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit',hour12:false});
 const fmtBKK_nice=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Bangkok',month:'short',day:'numeric'});
 const fmtBKK_full=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Bangkok',weekday:'short',month:'short',day:'numeric',year:'numeric'});
+// Cache every formatter once — constructing Intl.DateTimeFormat is ~100x the
+// cost of .format(), and these run per-trade over the whole history each render.
+const fmtBKK_hour=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',hour:'numeric',hour12:false});
+const fmtBKK_dow=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Bangkok',weekday:'short'});
+const fmtUTC_mo=new Intl.DateTimeFormat('en-US',{month:'short',timeZone:'UTC'});
 const bkkDay=ms=>fmtBKK_date.format(ms);
-const bkkHour=ms=>+new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',hour:'numeric',hour12:false}).format(ms);
-const bkkDow=ms=>new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Bangkok',weekday:'short'}).format(ms); // Mon…
+const bkkHour=ms=>+fmtBKK_hour.format(ms);
+const bkkDow=ms=>fmtBKK_dow.format(ms); // Mon…
 const DOWS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 function money(v,dp){ if(state.view.hide)return '•••';
@@ -447,7 +454,7 @@ function rangeMs(){ const now=Date.now(); const D=864e5; const f=state.filters;
   switch(f.preset){
     case '7D':return now-7*D; case '30D':return now-30*D; case '90D':return now-90*D;
     case '1Y':return now-365*D;
-    case 'YTD':{ const y=new Date().getFullYear();
+    case 'YTD':{ const y=bkkDay(now).slice(0,4);  // year in Bangkok, not the viewer's tz
       return Date.parse(y+'-01-01T00:00:00+07:00'); }
     default:return 0; } }
 function filtered(){ const f=state.filters; const from=rangeMs();
@@ -462,7 +469,7 @@ function filtered(){ const f=state.filters; const from=rangeMs();
 /* ═══════════════ metrics ═══════════════ */
 function computeMetrics(ts){
   const m={n:ts.length,net:0,wins:0,losses:0,be:0,grossWin:0,grossLoss:0,
-    maxWin:0,maxLoss:0,byDay:new Map(),share:0,holdW:[],holdL:[],
+    maxWin:0,maxLoss:0,byDay:new Map(),byDayN:new Map(),share:0,holdW:[],holdL:[],
     curve:[],maxDD:0,peak:0,ddPct:0,
     streakW:0,streakL:0,curStreak:0,curStreakSign:0};
   let cum=0,peak=0,maxDD=0,peakAtDD=0, sw=0,sl=0;
@@ -474,6 +481,7 @@ function computeMetrics(ts){
       sl++; sw=0; if(sl>m.streakL)m.streakL=sl;}
     else m.be++;
     const d=bkkDay(t.close_time_ms); m.byDay.set(d,(m.byDay.get(d)||0)+p);
+    m.byDayN.set(d,(m.byDayN.get(d)||0)+1);
     if(t.open_time_ms>0){ const mins=(t.close_time_ms-t.open_time_ms)/6e4;
       (p>=0?m.holdW:m.holdL).push(mins); }
     cum+=p; if(cum>peak)peak=cum;
@@ -550,7 +558,7 @@ function renderKPIs(m){
   tile('Max drawdown',m.maxDD>0?('−'+(state.view.hide?'•••':'$'+m.maxDD.toFixed(2))):'—',
     m.maxDD>0?'neg':'','peak-to-trough'+(m.ddPct>0?' · −'+m.ddPct.toFixed(1)+'%':''));
   tile('Best / worst day',
-    m.bestDay?pnlFmt(m.bestDay[1],0):'—',m.bestDay?'pos':'',
+    m.bestDay?pnlFmt(m.bestDay[1],0):'—',m.bestDay?pnlClass(m.bestDay[1]):'',
     m.worstDay?('worst '+pnlFmt(m.worstDay[1],0)+' ('+niceDay(m.worstDay[0])+')'):'');
   const stTxt=m.curStreak?(m.curStreak+(m.curStreakSign>0?'W':'L')+' now'):'—';
   tile('Streaks',stTxt,m.curStreakSign>0?'pos':m.curStreakSign<0?'neg':'',
@@ -674,7 +682,7 @@ function renderCalendar(m){
   const inner=h('div',{},flex);
   const months=h('div',{cls:'cal-months','aria-hidden':'true'},inner);
   const cal=h('div',{cls:'cal',role:'grid','aria-label':'Daily P&L calendar'},inner);
-  let cur=new Date(startDate), lastMonth='', colIdx=0;
+  let cur=new Date(startDate), lastMonth='';
   const endMs=Date.parse(end+'T12:00:00+07:00');
   while(cur.getTime()<=endMs+6*864e5){
     const col=h('div',{cls:'cal-col'},cal);
@@ -691,7 +699,7 @@ function renderCalendar(m){
           cell.setAttribute('aria-label',dstr+' '+signedMoney(v));
           if(state.filters.day===dstr)cell.classList.add('sel');
           const show=(x,y)=>tipShow([tTitle(fmtBKK_full.format(Date.parse(dstr+'T12:00:00+07:00'))),
-            tVal(pnlFmt(v)),tRow('trades',String(state.all.filter(t=>bkkDay(t.close_time_ms)===dstr&&passesNonDay(t)).length))],x,y);
+            tVal(pnlFmt(v)),tRow('trades',String(m.byDayN.get(dstr)||0))],x,y);
           cell.addEventListener('pointermove',e=>show(e.clientX,e.clientY));
           cell.addEventListener('pointerleave',tipHide);
           cell.addEventListener('focus',()=>{const r=cell.getBoundingClientRect();show(r.left+r.width/2,r.top);});
@@ -701,12 +709,11 @@ function renderCalendar(m){
           cell.addEventListener('click',act);
           cell.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();act();}});
         }
-        const mo=new Intl.DateTimeFormat('en-US',{month:'short',timeZone:'UTC'}).format(cur);
+        const mo=fmtUTC_mo.format(cur);
         if(r===0&&mo!==lastMonth&&cur.getUTCDate()<=13){ mLabel.textContent=mo; mLabel.style.width='auto'; mLabel.style.minWidth='16px'; lastMonth=mo; }
       }
       cur=new Date(cur.getTime()+864e5);
     }
-    colIdx++;
   }
   const leg=h('div',{cls:'cal-legend'},body);
   h('span',{text:'Loss'},leg);
@@ -716,10 +723,6 @@ function renderCalendar(m){
   const sp=h('span',{},leg); sp.style.marginLeft='auto';
   sp.textContent=m.byDay.size+' trading days';
 }
-function passesNonDay(t){ const f=state.filters;
-  if(f.traders.length&&!f.traders.includes(t.trader))return false;
-  if(f.symbols.length&&!f.symbols.includes(t.symbol))return false;
-  if(f.side!=='all'&&t.side!==f.side)return false; return true; }
 
 /* ═══════════════ win/loss card ═══════════════ */
 function renderWL(m){
@@ -782,8 +785,6 @@ function renderBreak(ts){
     h('small',{text:'×'+g.n},cat);
     const track=h('div',{cls:'hbar-track'},row);
     const half=50, w=Math.abs(g.net)/mx*half;
-    sv('svg',{},track); // noop to keep structure simple; use divs:
-    track.replaceChildren();
     const mid=h('div',{},track); mid.style.cssText='position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border)';
     const f=h('div',{cls:'hbar-fill'+(g.net<0?' neg-fill':'')},track);
     f.style.background=g.net>=0?C.gain:C.loss;
@@ -984,14 +985,22 @@ function renderTable(ts){
 function exportCSV(ts){
   const rows=sortedFiltered(ts);
   const esc=v=>{ v=String(v==null?'':v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  // Text columns (trader/symbol/side) are attacker-influenced free strings.
+  // Neutralize spreadsheet formula prefixes so opening the CSV in Excel/Sheets
+  // can't execute =HYPERLINK/DDE payloads. Applied ONLY to text — prefixing a
+  // numeric cell like -35.41 would turn every negative P&L into text.
+  const escTxt=v=>{ v=String(v==null?'':v);
+    if(/^[=+\-@\t\r]/.test(v)) v="'"+v;
+    return esc(v); };
   const head=['closed_at_bkk','trader','symbol','side','size','entry','exit','hold_min','gross_pnl','profit_share','net_pnl'];
   const lines=[head.join(',')];
   for(const t of rows){ lines.push([
-    bkkDay(t.close_time_ms)+' '+fmtBKK_hm.format(t.close_time_ms),
-    t.trader,t.symbol,t.side,t.size,t.open_price,t.close_price,
-    t.open_time_ms>0?((t.close_time_ms-t.open_time_ms)/6e4).toFixed(1):'',
-    t.pnl,t.profit_share||0,(t.pnl-(t.profit_share||0)).toFixed(4),
-  ].map(esc).join(',')); }
+    esc(bkkDay(t.close_time_ms)+' '+fmtBKK_hm.format(t.close_time_ms)),
+    escTxt(t.trader),escTxt(t.symbol),escTxt(t.side),
+    esc(t.size),esc(t.open_price),esc(t.close_price),
+    esc(t.open_time_ms>0?((t.close_time_ms-t.open_time_ms)/6e4).toFixed(1):''),
+    esc(t.pnl),esc(t.profit_share||0),esc((t.pnl-(t.profit_share||0)).toFixed(4)),
+  ].join(',')); }
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
@@ -1006,7 +1015,7 @@ function openDrawer(i,rows){ drawerRows=rows; drawerIdx=i;
   const d=$('drawer'); d.replaceChildren();
   const close=h('button',{cls:'dr-close','aria-label':'Close',text:'✕'},d);
   close.addEventListener('click',closeDrawer);
-  h('div',{cls:'klabel',text:t.trader},d).classList.add('klabel');
+  h('div',{cls:'klabel',text:t.trader},d);
   const symRow=h('div',{cls:'dr-sym'},d);
   symRow.append(txt(t.symbol+' '));
   h('span',{cls:'side-tag side-'+(t.side==='short'?'short':'long'),text:(t.side||'long').toUpperCase()},symRow);
@@ -1115,6 +1124,9 @@ $('seg-basis').addEventListener('click',e=>{ const b=e.target.closest('button');
 $('seg-unit').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
   state.view.unit=b.dataset.v; persist(); syncToggles(); renderAll(); });
 $('btn-hide').addEventListener('click',()=>{ state.view.hide=!state.view.hide;
+  // Mirror the dashboard's shared 'hidePnl' key so privacy survives the
+  // Journal↔Dashboard navigation (theme is already shared the same way).
+  try{ localStorage.setItem('hidePnl', state.view.hide?'1':''); }catch(e){}
   persist(); syncToggles(); renderAll(); });
 function syncToggles(){
   document.querySelectorAll('#seg-basis button').forEach(b=>b.classList.toggle('on',b.dataset.v===state.view.basis));
@@ -1164,7 +1176,6 @@ async function load(first){
     const data=await r.json();
     state.traders=data.traders||[];
     state.all=(data.trades||[]);
-    state.hasOpenTimes=state.all.some(t=>t.open_time_ms>0);
     // prune persisted filters that no longer match data
     state.filters.traders=state.filters.traders.filter(n=>state.traders.some(t=>t.name===n));
     const symSet=new Set(state.all.map(t=>t.symbol));
