@@ -55,20 +55,27 @@ jobs:
       # generic red X into an actionable checklist right in the run summary.
       - name: How to recover (manual re-login)
         if: failure()
+        env:
+          RECOVERY_URL: ${{ github.server_url }}/${{ github.repository }}/blob/master/RECOVERY.md
         run: |
-          {
-            echo "## ⚠️ Bitget session needs a manual re-login"
-            echo ""
-            echo "The silent refresh failed, which almost always means the session fully"
-            echo "expired. Bitget periodically forces a phone-approved re-login, and no"
-            echo "automation can tap **Approve** in your Bitget app — so re-seed a fresh"
-            echo "cookie by hand (takes ~30 seconds):"
-            echo ""
-            echo "1. Open **bitget.com** in your browser, already logged in."
-            echo "2. Click the **copy-cookie bookmarklet** (see \`RECOVERY.md\`), *or*"
-            echo "   open DevTools → Console → run \`document.cookie\` → copy the string."
-            echo "3. Tracker dashboard → **Polling Setup** → paste → **Save**."
-            echo "4. Come back here → **Run workflow** to confirm it goes green."
-            echo ""
-            echo "Full instructions: [\`RECOVERY.md\`](../blob/master/RECOVERY.md)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ⚠️ Bitget session needs a manual re-login
+
+          The silent refresh failed, which almost always means the session fully
+          expired. Bitget periodically forces a phone-approved re-login, and no
+          automation can tap **Approve** in your Bitget app — so re-seed a fresh
+          cookie by hand.
+
+          **If you're still logged in on bitget.com (~30 seconds):**
+          1. Open **bitget.com** in your browser, already logged in.
+          2. Click the **copy-cookie bookmarklet** (see RECOVERY.md), *or*
+             open DevTools → Console → run \`document.cookie\` → copy the string.
+          3. Tracker dashboard → **Polling Setup** → paste → **Save**.
+          4. Come back here → **Run workflow** to confirm it goes green.
+
+          **If your bitget.com session is ALSO dead** (a copied cookie stays
+          expired), you need a brand-new app-approved login — run \`npm run login\`
+          locally then \`node push-cookie.js\` (RECOVERY.md **Method C**).
+
+          Full instructions: [RECOVERY.md]($RECOVERY_URL)
+          EOF

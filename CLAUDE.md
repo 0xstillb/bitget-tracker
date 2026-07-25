@@ -6,10 +6,13 @@ Tracks a **copy trading FOLLOWER** account on Bitget (following trader "DKTradin
 Deployed on Render free tier: `https://YOUR-SERVICE-NAME.onrender.com`
 
 ## Architecture
-- `main.py` — FastAPI app, in-memory state (`_mt5`, `_settings`), `/api/widget`, `/api/poller`
+- `main.py` — FastAPI app, in-memory state (`_mt5`, `_settings`), `/api/widget`, `/api/poller`, `/api/journal`. GZip middleware compresses JSON/HTML responses.
 - `browser_poller.py` — Playwright/Chromium headless browser, polls every 2 min
+- `static/index.html` — dashboard (dark/light). Also renders performance KPIs, a daily-P&L calendar, and insights from `/api/journal`; header has a Hide-P&L privacy toggle.
+- `static/journal.html` — full trading-journal analytics page (equity curve, calendar, breakdowns, insights, trade log, CSV export). Shares theme + `hidePnl` privacy keys with the dashboard via localStorage.
 - `scriptable/widget.js` — iPhone home screen widget (Scriptable app)
 - `cookies.json` — Bitget session cookie (auto-restored from `BITGET_COOKIE` env var on redeploy)
+- `.github/workflows/refresh-cookie.yml` — backup cookie-refresh (every 6h). `RECOVERY.md` — manual re-seed steps.
 
 ## How scraping works
 No API keys. Uses Playwright to navigate to `bitget.com/about`, inject session cookies,
@@ -57,4 +60,5 @@ _settings: balance, investment, all_time_pnl, realized_pnl
 - `/api/widget` — widget data (balance, pnl, stale flag)
 - `/api/poller` — scraper status (last_poll, pushes, cookie health, probe results)
 - `/api/mt5/debug` — raw cached data
+- `/api/journal` — all traders' closed trades flattened (+`open_time_ms` for hold-time), sorted by close time, for the dashboard analytics and journal page
 - `POST /api/cookie` — update cookie via JSON `{"cookie": "..."}`
