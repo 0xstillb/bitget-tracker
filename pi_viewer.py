@@ -202,10 +202,26 @@ class PiViewer:
 class ViewerApplication:
     """Route the intentionally small GET-only HTTP surface."""
 
+    SECURITY_HEADERS = {
+        "Cache-Control": "no-store, max-age=0",
+        "Content-Security-Policy": (
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'none'; object-src 'none'"
+        ),
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
+
     def __init__(self, viewer: PiViewer):
         self.viewer = viewer
 
     def response(self, method: str, path: str) -> tuple[int, dict[str, str], str]:
+        status, headers, body = self._route_response(method, path)
+        return status, {**headers, **self.SECURITY_HEADERS}, body
+
+    def _route_response(self, method: str, path: str) -> tuple[int, dict[str, str], str]:
         if method != "GET":
             return 405, {"Allow": "GET", "Content-Type": "application/json"}, json.dumps({"detail": "GET only"})
         parsed = urlsplit(path)
