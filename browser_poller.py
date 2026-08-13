@@ -7,6 +7,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable
 
+from alerts import AlertStateMachine, notifier_from_environment
+
 logger = logging.getLogger(__name__)
 
 BKK = timezone(timedelta(hours=7))
@@ -14,6 +16,7 @@ BITGET_BASE = "https://www.bitget.com"
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SEC", "30"))
 COOKIES_FILE = Path(os.environ.get("COOKIES_PATH", "cookies.json"))
 TRADERS_FILE = Path(os.environ.get("TRADERS_PATH", "traders.json"))
+ALERT_STATE_FILE = Path(os.environ.get("ALERT_STATE_PATH", "alert-state.json"))
 
 CHROMIUM_ARGS = [
     "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
@@ -229,6 +232,7 @@ def _parse_cookie_string(cookie_str: str) -> list[dict]:
 
 
 async def start_poller(push_fn: Callable):
+    alerts = AlertStateMachine(ALERT_STATE_FILE, notifier_from_environment())
     _status["running"] = True
     await asyncio.sleep(3)
 
@@ -237,6 +241,7 @@ async def start_poller(push_fn: Callable):
     except ImportError:
         logger.error("Playwright not installed — poller disabled")
         _status["last_error"] = "Playwright not installed"
+        alerts.record_failure("Playwright is not installed")
         return
 
     def _counted_push(kind: str, data, trader: str = None):
@@ -249,6 +254,7 @@ async def start_poller(push_fn: Callable):
         if not cookie_str:
             _status["last_error"] = "No cookie set"
             _status["browser_alive"] = False
+            alerts.record_failure("No cookie is configured")
             await asyncio.sleep(10)
             continue
 
@@ -256,6 +262,7 @@ async def start_poller(push_fn: Callable):
         traders, trader_types = _load_traders()
         if not traders:
             _status["last_error"] = "No traders configured"
+            alerts.record_failure("No traders are configured")
             await asyncio.sleep(30)
             continue
 
@@ -265,6 +272,12 @@ async def start_poller(push_fn: Callable):
         except Exception as e:
             logger.error("Poll cycle crashed: %s", e)
             _status["last_error"] = f"Poll error: {e}"
+            alerts.record_failure("Poll cycle crashed")
+        else:
+            if _status.get("session_verified_this_cycle"):
+                alerts.record_success()
+            else:
+                alerts.record_failure("No authenticated Bitget response")
 
         _status["browser_alive"] = False
         # Add ±40% random jitter so the cadence doesn't look robotic to Bitget's

@@ -8,6 +8,7 @@ credentials.json
 history.json
 snapshot.json
 viewer-cache.json
+alert-state.json
 traders.json
 *.pem
 *.key

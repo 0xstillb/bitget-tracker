@@ -14,6 +14,7 @@ Environment=TRADERS_PATH=/var/lib/bitget-tracker/traders.json
 Environment=HISTORY_PATH=/var/lib/bitget-tracker/history.json
 Environment=SNAPSHOT_PATH=/var/lib/bitget-tracker/snapshot.json
 Environment=CREDENTIALS_PATH=/var/lib/bitget-tracker/credentials.json
+Environment=ALERT_STATE_PATH=/var/lib/bitget-tracker/alert-state.json
 ExecStart=/usr/bin/python3 /opt/bitget-tracker/run_core.py
 Restart=on-failure
 RestartSec=5
