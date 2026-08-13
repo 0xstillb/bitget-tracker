@@ -1134,6 +1134,119 @@ async def get_mt5_history():
     return _mt5["history"] or []
 
 
+def _esp32_position_rows(raw: Any, source: str = "core") -> list[dict]:
+    """Project parsed positions into the stable, compact ESP32 row schema."""
+    return [{
+        "s": position["symbol"],
+        "d": "S" if position["side"] == "short" else "L",
+        "sz": position["size"],
+        "e": position["entry_price"],
+        "u": round(position["unrealized_pnl"], 2),
+        "src": source[:8],
+    } for position in _parse_positions(raw)]
+
+
+def _esp32_history_rows(trades: list[dict], limit: int) -> list[dict]:
+    """Project parsed trade history into the stable compact ESP32 row schema."""
+    rows = []
+    for trade in sorted(trades, key=lambda item: item.get("close_time_ms", 0), reverse=True)[:limit]:
+        rows.append({
+            "t": (trade.get("time", "") or "")[5:],
+            "s": trade.get("symbol", ""),
+            "d": "S" if trade.get("side") == "short" else "L",
+            "p": round(trade.get("pnl", 0.0), 2),
+        })
+    return rows
+
+
+def _esp32_elite() -> dict:
+    data = _elite.get("data") or {}
+    settings_pnl = _settings.get("elite_all_time_pnl", 0.0)
+    return {
+        "on": _elite.get("data") is not None or abs(settings_pnl) >= 0.01,
+        "bal": round(data.get("balance", 0.0), 2),
+        "all": round(data.get("all_time_pnl") or settings_pnl or 0.0, 2),
+        "day": round(data.get("daily_pnl") or 0.0, 2),
+        "open": round(data.get("open_pnl") or 0.0, 2),
+        "pos": int(data.get("open_position_count") or 0),
+        "aum": round(data.get("aum") or 0.0, 2),
+        "fans": int(data.get("follower_count") or 0),
+        "ps": round(data.get("profit_share_earned") or 0.0, 2),
+        "pst": round(data.get("profit_share_today") or 0.0, 2),
+        "cp": round(data.get("copiers_pnl") or 0.0, 2),
+        "roi": data.get("roi"),
+    }
+
+
+@app.get("/api/esp32")
+async def get_esp32():
+    """Compact home payload retained for existing ESP32 firmware clients."""
+    summary = _mt5.get("summary")
+    earn = _earn.get("data") or {}
+    earn_total = round(earn.get("total") or 0.0, 2)
+    earn_day = round(earn.get("interest_24h") or 0.0, 2)
+    elite = _esp32_elite()
+    positions = _esp32_position_rows(_mt5.get("positions_raw"))[:3]
+    if not summary:
+        return {
+            "ok": False, "stale": True, "upd": datetime.now(BKK).strftime("%H:%M"),
+            "bal": round(_settings.get("balance", 0.0) + earn_total + elite["bal"], 2),
+            "inv": round(_settings.get("investment", 0.0), 2),
+            "day": 0.0, "open": 0.0, "npos": 0, "ntoday": 0, "all": 0.0,
+            "earn": earn_total, "eday": earn_day, "traders": [], "elite": elite,
+            "positions": positions,
+        }
+
+    cancelled = set(_settings.get("cancelled_trader_names") or [])
+    traders = []
+    for name in _trader_names():
+        if name in cancelled:
+            continue
+        trader_summary = _tc(name).get("summary")
+        if not isinstance(trader_summary, dict) or not trader_summary.get("has_data"):
+            continue
+        traders.append({
+            "n": (trader_summary.get("name") or name)[:16],
+            "bal": round(trader_summary.get("balance", 0.0), 2),
+            "day": round(trader_summary.get("daily_pnl", 0.0), 2),
+            "all": round(trader_summary.get("all_time_pnl", 0.0), 2),
+            "open": round(trader_summary.get("open_positions_pnl", 0.0), 2),
+            "pos": int(trader_summary.get("open_position_count", 0)),
+        })
+    return {
+        "ok": True, "stale": not bool(summary.get("pushed_at")),
+        "upd": summary.get("pushed_at") or datetime.now(BKK).strftime("%H:%M"),
+        "bal": round(summary.get("total_balance", 0.0) + earn_total + elite["bal"], 2),
+        "inv": round(summary.get("total_investment", 0.0), 2),
+        "day": round(summary.get("daily_pnl", 0.0), 2),
+        "open": round(summary.get("open_positions_pnl", 0.0), 2),
+        "npos": int(summary.get("open_positions", 0)),
+        "ntoday": int(summary.get("trades_today", 0)),
+        "all": round(summary.get("all_time_pnl", 0.0), 2),
+        "earn": earn_total, "eday": earn_day, "traders": traders, "elite": elite,
+        "positions": positions,
+    }
+
+
+@app.get("/api/esp32/positions")
+async def get_esp32_positions(trader: str | None = None):
+    """Compact open-position rows; optional trader query remains compatible."""
+    if trader and trader in _trader_names():
+        return {"positions": _esp32_position_rows(_tc(trader).get("positions_raw"), trader)}
+    return {"positions": _esp32_position_rows(_mt5.get("positions_raw"))}
+
+
+@app.get("/api/esp32/history")
+async def get_esp32_history(n: int = 30, trader: str | None = None):
+    """Compact closed-trade rows, newest first, capped for ArduinoJson clients."""
+    limit = max(1, min(n, 100))
+    if trader and trader in _trader_names():
+        trades = _tc(trader).get("trades") or []
+    else:
+        trades = _mt5.get("trades") or []
+    return {"trades": _esp32_history_rows(trades, limit)}
+
+
 @app.get("/api/journal")
 async def get_journal():
     """Everything the journal page needs in one call: all traders' closed
