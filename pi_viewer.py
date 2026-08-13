@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlsplit
 
 
 _SECRET_MARKERS = (
@@ -148,6 +149,55 @@ class PiViewer:
             "backoff_seconds": min(300, 2 ** (self.failures - 1)) if self.failures else 0,
         }
 
+    def esp32_home(self) -> dict | None:
+        """Project cached Core snapshot into the established compact ESP32 schema."""
+        snapshot = self.summary()
+        if snapshot is None:
+            return None
+        data = snapshot["data"]
+        summary = data.get("summary") or {}
+        earn = data.get("earn") or {}
+        elite = data.get("elite") or {"on": False, "bal": 0.0}
+        positions = list(data.get("positions") or [])[:3]
+        traders = []
+        for trader in data.get("traders") or []:
+            if not isinstance(trader, dict) or not trader.get("has_data", True):
+                continue
+            traders.append({
+                "n": str(trader.get("name") or "")[:16],
+                "bal": round(trader.get("balance") or 0.0, 2),
+                "day": round(trader.get("daily_pnl") or 0.0, 2),
+                "all": round(trader.get("all_time_pnl") or 0.0, 2),
+                "open": round(trader.get("open_positions_pnl") or 0.0, 2),
+                "pos": int(trader.get("open_position_count") or 0),
+            })
+        return {
+            "ok": True,
+            "stale": self.last_error is not None,
+            "upd": summary.get("pushed_at") or snapshot["updated_at"],
+            "bal": round((summary.get("total_balance") or 0.0) + (earn.get("total") or 0.0) + (elite.get("bal") or 0.0), 2),
+            "inv": round(summary.get("total_investment") or 0.0, 2),
+            "day": round(summary.get("daily_pnl") or 0.0, 2),
+            "open": round(summary.get("open_positions_pnl") or 0.0, 2),
+            "npos": int(summary.get("open_positions") or 0),
+            "ntoday": int(summary.get("trades_today") or 0),
+            "all": round(summary.get("all_time_pnl") or 0.0, 2),
+            "earn": round(earn.get("total") or 0.0, 2),
+            "eday": round(earn.get("interest_24h") or 0.0, 2),
+            "traders": traders,
+            "elite": elite,
+            "positions": positions,
+        }
+
+    def esp32_positions(self) -> list[dict]:
+        snapshot = self.summary()
+        return list((snapshot or {"data": {}})["data"].get("positions") or [])
+
+    def esp32_history(self, limit: int) -> list[dict]:
+        snapshot = self.summary()
+        history = list((snapshot or {"data": {}})["data"].get("history") or [])
+        return history[:max(1, min(limit, 100))]
+
 
 class ViewerApplication:
     """Route the intentionally small GET-only HTTP surface."""
@@ -158,18 +208,34 @@ class ViewerApplication:
     def response(self, method: str, path: str) -> tuple[int, dict[str, str], str]:
         if method != "GET":
             return 405, {"Allow": "GET", "Content-Type": "application/json"}, json.dumps({"detail": "GET only"})
-        if path == "/":
+        parsed = urlsplit(path)
+        route = parsed.path
+        if route == "/":
             return 200, {"Content-Type": "text/html; charset=utf-8"}, (
                 "<!doctype html><title>Bitget Pi Viewer</title><h1>Bitget Pi Viewer</h1>"
                 "<p>Read-only cached snapshot service.</p>"
             )
-        if path == "/api/v1/summary":
+        if route == "/api/v1/summary":
             snapshot = self.viewer.summary()
             if snapshot is None:
                 return 503, {"Content-Type": "application/json"}, json.dumps({"detail": "no cached snapshot"})
             return 200, {"Content-Type": "application/json"}, json.dumps(snapshot)
-        if path == "/api/v1/health":
+        if route == "/api/v1/health":
             return 200, {"Content-Type": "application/json"}, json.dumps(self.viewer.health())
+        if route == "/api/esp32":
+            payload = self.viewer.esp32_home()
+            if payload is None:
+                return 503, {"Content-Type": "application/json"}, json.dumps({"detail": "no cached snapshot"})
+            return 200, {"Content-Type": "application/json"}, json.dumps(payload)
+        if route == "/api/esp32/positions":
+            return 200, {"Content-Type": "application/json"}, json.dumps({"positions": self.viewer.esp32_positions()})
+        if route == "/api/esp32/history":
+            raw_limit = parse_qs(parsed.query).get("n", ["30"])[0]
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                limit = 30
+            return 200, {"Content-Type": "application/json"}, json.dumps({"trades": self.viewer.esp32_history(limit)})
         return 404, {"Content-Type": "application/json"}, json.dumps({"detail": "not found"})
 
 

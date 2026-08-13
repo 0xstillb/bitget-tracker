@@ -268,6 +268,13 @@ def _snapshot_payload() -> dict:
     return {
         "summary": _mt5["summary"] if isinstance(_mt5.get("summary"), dict) else {},
         "traders": traders,
+        "positions": _esp32_position_rows(_mt5.get("positions_raw"))[:3],
+        "history": _esp32_history_rows(_mt5.get("trades") or [], 100),
+        "earn": {
+            "total": round((_earn.get("data") or {}).get("total") or 0.0, 2),
+            "interest_24h": round((_earn.get("data") or {}).get("interest_24h") or 0.0, 2),
+        },
+        "elite": _esp32_elite(),
     }
 
 

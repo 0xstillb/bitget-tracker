@@ -9,6 +9,8 @@ Copy `pi-viewer.env.example` to `/etc/bitget-pi-viewer/viewer.env`, replace the
 Tailscale address and token, set mode `0600`, then install the systemd unit.
 Create `/var/lib/bitget-pi-viewer` owned by `bitget-viewer` first.
 
-Only these GET routes exist: `/`, `/api/v1/summary`, and `/api/v1/health`.
+The native viewer routes are GET-only: `/`, `/api/v1/summary`, and
+`/api/v1/health`. For CYD compatibility, the same cache also serves GET-only
+`/api/esp32`, `/api/esp32/positions`, and `/api/esp32/history`.
 Use the Pi LAN address for ESP32 devices; keep the Core accessible only through
 the Task 04 Tailscale ACL.
