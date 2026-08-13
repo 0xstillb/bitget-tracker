@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 BKK = timezone(timedelta(hours=7))
 WRITE_TOKEN = os.environ.get("WRITE_TOKEN", "")
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
+CORE_CORS_ORIGINS = tuple(
+    origin.strip() for origin in os.environ.get("CORE_CORS_ORIGINS", "http://localhost").split(",")
+    if origin.strip()
+)
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
@@ -38,6 +43,15 @@ def require_write_token(request: Request) -> None:
         raise HTTPException(status_code=503, detail="write API disabled")
     provided = request.headers.get("x-write-token") or ""
     if not _constant_time_eq(provided, WRITE_TOKEN):
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+
+def require_internal_token(request: Request) -> None:
+    """Protect the Pi-facing snapshot endpoint independently of write access."""
+    if not INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=503, detail="internal API disabled")
+    provided = request.headers.get("x-internal-token") or ""
+    if not _constant_time_eq(provided, INTERNAL_API_TOKEN):
         raise HTTPException(status_code=403, detail="unauthorized")
 
 
@@ -1046,14 +1060,22 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=list(CORE_CORS_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "X-Internal-Token", "X-Write-Token"],
 )
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/internal/v1/snapshot", dependencies=[Depends(require_internal_token)])
+async def get_internal_snapshot():
+    """Serve the last atomically saved, secret-free snapshot to the Pi viewer."""
+    snapshot = SNAPSHOT_STORE.load()
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="no snapshot available")
+    return snapshot
 
 @app.post("/api/push/mt5", dependencies=[Depends(require_write_token)])
 async def push_mt5(request: Request):

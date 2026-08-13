@@ -1,0 +1,15 @@
+// Merge these examples into your tailnet policy. Replace the tagged devices
+// with your own node tags; the Core accepts only the Pi Viewer node on port 10000.
+{
+  "tagOwners": {
+    "tag:bitget-core": ["autogroup:admin"],
+    "tag:bitget-viewer": ["autogroup:admin"],
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["tag:bitget-viewer"],
+      "dst": ["tag:bitget-core:10000"],
+    },
+  ],
+}
