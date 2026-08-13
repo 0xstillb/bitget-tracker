@@ -30,6 +30,8 @@ WORKER_CODES = frozenset({
     "otp_pending",
     "captcha_pending",
     "rejected",
+    "disabled",
+    "credentials_missing",
     "attempts_exhausted",
     "not_implemented",
     "worker_error",
