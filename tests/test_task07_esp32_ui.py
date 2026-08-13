@@ -56,4 +56,6 @@ def test_cyd_has_a_reproducible_platformio_build_configuration():
     assert "board = esp32dev" in config
     assert "TFT_eSPI" in config
     assert "XPT2046_Touchscreen" in config
+    assert "-D USER_SETUP_LOADED" in config
+    assert "-include User_Setup.h" in config
     assert ".pio/" in Path(".gitignore").read_text(encoding="utf-8")
