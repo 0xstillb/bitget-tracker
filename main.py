@@ -10,7 +10,7 @@ from typing import Any
 
 import hmac
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -24,10 +24,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BKK = timezone(timedelta(hours=7))
+WRITE_TOKEN = os.environ.get("WRITE_TOKEN", "")
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())
+
+
+def require_write_token(request: Request) -> None:
+    """Fail closed for state-changing and diagnostic administration routes."""
+    if not WRITE_TOKEN:
+        raise HTTPException(status_code=503, detail="write API disabled")
+    provided = request.headers.get("x-write-token") or ""
+    if not _constant_time_eq(provided, WRITE_TOKEN):
+        raise HTTPException(status_code=403, detail="unauthorized")
 
 
 SETTINGS_FILE    = Path(os.environ.get("SETTINGS_PATH", "settings.json"))
@@ -995,7 +1005,7 @@ app.add_middleware(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@app.post("/api/push/mt5")
+@app.post("/api/push/mt5", dependencies=[Depends(require_write_token)])
 async def push_mt5(request: Request):
     body = await request.json()
     _push_data(body.get("kind"), body.get("data"), body.get("trader"))
@@ -1025,7 +1035,7 @@ async def get_mt5_positions():
     return _parse_positions(_mt5["positions_raw"])
 
 
-@app.get("/api/mt5/positions/raw")
+@app.get("/api/mt5/positions/raw", dependencies=[Depends(require_write_token)])
 async def get_mt5_positions_raw():
     """Return raw position data for field-name diagnosis."""
     raw = _mt5["positions_raw"]
@@ -1078,7 +1088,7 @@ async def get_journal():
             "generated_at": datetime.now(BKK).isoformat()}
 
 
-@app.get("/api/mt5/debug")
+@app.get("/api/mt5/debug", dependencies=[Depends(require_write_token)])
 async def get_mt5_debug():
     pos_raw = _mt5["positions_raw"]
     traders_debug = {}
@@ -1119,12 +1129,12 @@ async def get_mt5_debug():
     }
 
 
-@app.get("/api/mt5/sniffs")
+@app.get("/api/mt5/sniffs", dependencies=[Depends(require_write_token)])
 async def get_sniffs():
     return _mt5.get("balance_sniffs", [])
 
 
-@app.get("/api/mt5/raw")
+@app.get("/api/mt5/raw", dependencies=[Depends(require_write_token)])
 async def get_mt5_raw():
     return {
         "positions": _mt5["positions_raw"],
@@ -1138,7 +1148,7 @@ async def get_settings():
     return _settings
 
 
-@app.post("/api/settings")
+@app.post("/api/settings", dependencies=[Depends(require_write_token)])
 async def post_settings(request: Request):
     global _settings
     body = await request.json()
@@ -1204,7 +1214,7 @@ async def list_traders():
     return _traders_list
 
 
-@app.post("/api/traders")
+@app.post("/api/traders", dependencies=[Depends(require_write_token)])
 async def add_trader(request: Request):
     global _traders_list, _DEFAULT_TRADER
     body = await request.json()
@@ -1225,7 +1235,7 @@ async def add_trader(request: Request):
     return {"ok": True, "traders": _traders_list}
 
 
-@app.delete("/api/traders/{name}")
+@app.delete("/api/traders/{name}", dependencies=[Depends(require_write_token)])
 async def remove_trader(name: str):
     global _traders_list
     before = len(_traders_list)
@@ -1245,7 +1255,7 @@ async def remove_trader(name: str):
     return {"ok": True, "traders": _traders_list}
 
 
-@app.patch("/api/traders/{name}")
+@app.patch("/api/traders/{name}", dependencies=[Depends(require_write_token)])
 async def update_trader(name: str, request: Request):
     global _traders_list
     body = await request.json()
@@ -1266,7 +1276,7 @@ async def update_trader(name: str, request: Request):
     return {"ok": True, "trader": trader}
 
 
-@app.post("/api/traders/{name}/reset")
+@app.post("/api/traders/{name}/reset", dependencies=[Depends(require_write_token)])
 async def reset_trader_data(name: str):
     """Clear cached settings and in-memory data for a trader without removing it."""
     if not any(t["name"] == name for t in _traders_list):
@@ -1296,7 +1306,7 @@ async def get_investment():
     }
 
 
-@app.get("/api/investment/debug")
+@app.get("/api/investment/debug", dependencies=[Depends(require_write_token)])
 async def get_investment_debug():
     """Full investment data including raw diagnostic fields."""
     creds = _load_credentials()
@@ -1308,7 +1318,7 @@ async def get_investment_debug():
     }
 
 
-@app.post("/api/investment/refresh")
+@app.post("/api/investment/refresh", dependencies=[Depends(require_write_token)])
 async def refresh_investment():
     if not _load_credentials():
         return {"ok": False, "error": "No API credentials configured"}
@@ -1331,7 +1341,7 @@ async def get_earn():
     }
 
 
-@app.post("/api/earn/refresh")
+@app.post("/api/earn/refresh", dependencies=[Depends(require_write_token)])
 async def refresh_earn():
     if not _load_credentials():
         return {"ok": False, "error": "No API credentials configured"}
@@ -1356,7 +1366,7 @@ async def get_futures_leader():
     }
 
 
-@app.post("/api/futures-leader/refresh")
+@app.post("/api/futures-leader/refresh", dependencies=[Depends(require_write_token)])
 async def refresh_futures_leader():
     if not _load_credentials():
         return {"ok": False, "error": "No API credentials configured"}
@@ -1408,7 +1418,7 @@ async def get_elite_overview():
     }
 
 
-@app.post("/api/credentials")
+@app.post("/api/credentials", dependencies=[Depends(require_write_token)])
 async def save_credentials(request: Request):
     body = await request.json()
     api_key    = body.get("api_key", "").strip()
@@ -1432,9 +1442,7 @@ async def save_credentials(request: Request):
 @app.get("/api/credentials/status")
 async def credentials_status():
     creds = _load_credentials()
-    has = creds is not None
-    key_preview = (creds["api_key"][:6] + "...") if has else None
-    return {"configured": has, "key_preview": key_preview}
+    return {"configured": creds is not None}
 
 
 # ── Browser poller endpoints ─────────────────────────────────────────────────
@@ -1445,7 +1453,7 @@ async def get_poller_status():
     return get_status()
 
 
-@app.get("/api/poller/test")
+@app.get("/api/poller/test", dependencies=[Depends(require_write_token)])
 async def test_poller_cookie():
     from browser_poller import _load_cookie_string, _parse_cookie_string, BITGET_BASE, PORTFOLIO_ID, CHROMIUM_ARGS
     cookie_str = _load_cookie_string()
@@ -1483,7 +1491,7 @@ async def test_poller_cookie():
         return {"ok": False, "error": str(e)}
 
 
-@app.post("/api/poller/cookie")
+@app.post("/api/poller/cookie", dependencies=[Depends(require_write_token)])
 async def set_poller_cookie(request: Request):
     body = await request.json()
     cookie = body.get("cookie", "").strip()
@@ -1506,7 +1514,7 @@ async def set_poller_cookie(request: Request):
     return {"ok": True, "length": len(cookie)}
 
 
-@app.delete("/api/poller/cookie")
+@app.delete("/api/poller/cookie", dependencies=[Depends(require_write_token)])
 async def clear_poller_cookie():
     if COOKIES_FILE.exists():
         COOKIES_FILE.unlink()

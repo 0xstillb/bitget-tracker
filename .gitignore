@@ -4,6 +4,15 @@ __pycache__/
 .venv/
 settings.json
 cookies.json
+credentials.json
+history.json
+traders.json
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.h
+.pytest_cache/
 headless/browser-data/
 headless/node_modules/
 headless/.env

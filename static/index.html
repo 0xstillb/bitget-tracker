@@ -1334,7 +1334,7 @@
     const val = input.trim() === '' ? 0 : parseFloat(input);
     if (isNaN(val)) { alert('Invalid number'); return; }
     try {
-      const r = await fetch('/api/settings', {
+      const r = await writeFetch('/api/settings', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({[settingKey]: val}),
@@ -1905,6 +1905,17 @@
     if (c._history) drawChart(c._history);
   });
 
+  function writeFetch(url, options = {}) {
+    let token = sessionStorage.getItem('bitget_tracker_write_token');
+    if (!token) {
+      token = window.prompt('Enter the tracker write token');
+      if (token) sessionStorage.setItem('bitget_tracker_write_token', token);
+    }
+    const headers = new Headers(options.headers || {});
+    if (token) headers.set('X-Write-Token', token);
+    return fetch(url, { ...options, headers });
+  }
+
   // Settings modal
   const settingsModal = document.getElementById('settings-modal');
   const inputBal = document.getElementById('input-balance');
@@ -1930,7 +1941,7 @@
     if (inputInv.value !== '') body.investment = parseFloat(inputInv.value) || 0;
     const goalVal = document.getElementById('input-goal').value.trim();
     if (goalVal !== '') localStorage.setItem('goal_target', goalVal);
-    await fetch('/api/settings', {
+    await writeFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1956,7 +1967,7 @@
       fetch('/api/credentials/status').then(r => r.json()).then(s => {
         if (s.configured) {
           document.getElementById('api-key-details').querySelector('summary').textContent =
-            `API Keys (configured: ${s.key_preview}) ✓`;
+            'API Keys (configured) ✓';
         }
       });
     });
@@ -1983,7 +1994,7 @@
         if (parsed.cookie) cookiePayload = { cookie: parsed.cookie, localStorage: parsed.localStorage || {} };
       } catch (_) { /* not JSON — treat as plain cookie string */ }
     }
-    const res = await fetch('/api/poller/cookie', {
+    const res = await writeFetch('/api/poller/cookie', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cookiePayload),
@@ -2012,7 +2023,7 @@
     }
     statusEl.style.display = 'block';
     statusEl.innerHTML = '<span style="color:var(--muted)">Saving…</span>';
-    const res = await fetch('/api/credentials', {
+    const res = await writeFetch('/api/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: key, secret, passphrase }),
@@ -2109,7 +2120,7 @@
   async function saveTraderEdit(name, key) {
     const newId = document.getElementById('trader-edit-id-' + key).value.trim();
     if (!newId) return;
-    const res = await fetch(`/api/traders/${encodeURIComponent(name)}`, {
+    const res = await writeFetch(`/api/traders/${encodeURIComponent(name)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: newId }),
@@ -2124,14 +2135,14 @@
   }
 
   async function resetTraderData(name) {
-    const res = await fetch(`/api/traders/${encodeURIComponent(name)}/reset`, { method: 'POST' }).then(r => r.json());
+    const res = await writeFetch(`/api/traders/${encodeURIComponent(name)}/reset`, { method: 'POST' }).then(r => r.json());
     if (res.ok) { fetchTraders(); fetchData(); }
     else alert('Error: ' + (res.error || 'unknown'));
   }
 
   async function removeTrader(name) {
     if (!confirm(`Remove ${name}? Their cached data will be cleared.`)) return;
-    const res = await fetch(`/api/traders/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(r => r.json());
+    const res = await writeFetch(`/api/traders/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(r => r.json());
     if (res.ok) { await refreshTradersModalList(); fetchTraders(); fetchData(); }
     else alert('Error: ' + (res.error || 'unknown'));
   }
@@ -2148,7 +2159,7 @@
     }
     status.style.display = 'block';
     status.innerHTML = '<span style="color:var(--muted)">Adding…</span>';
-    const res = await fetch('/api/traders', {
+    const res = await writeFetch('/api/traders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, id, type }),

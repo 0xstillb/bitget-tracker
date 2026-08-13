@@ -94,6 +94,7 @@ Note each `portfolioId` and the trader name you're copying.
 |----------|-------|----------|
 | `TRADERS` | `TraderName:portfolioId` | **Yes** |
 | `COOKIE_SYNC_TOKEN` | random secret (see Step 5) | No (enables auto-refresh) |
+| `WRITE_TOKEN` | separate random secret | **Yes** (protects writes/admin endpoints) |
 | `POLL_INTERVAL_SEC` | `30` | No (default: 30 s) |
 | `BITGET_API_KEY` | your Bitget API key | No (earn/deposits only) |
 | `BITGET_API_SECRET` | your Bitget API secret | No |
@@ -148,14 +149,15 @@ Without this step you must manually re-paste the cookie every ~5 days. The GitHu
 
 **Quick summary:**
 
-1. Generate a token: `openssl rand -hex 32`
-2. **Render** → add env var `COOKIE_SYNC_TOKEN` = that token
+1. Generate two tokens: `openssl rand -hex 32`
+2. **Render** → add `COOKIE_SYNC_TOKEN` and `WRITE_TOKEN` as separate env vars
 3. **GitHub** → repo Settings → Secrets and variables → Actions → add:
    - `TRACKER_URL` = `https://YOUR-SERVICE-NAME.onrender.com`
-   - `COOKIE_SYNC_TOKEN` = same token
+   - `COOKIE_SYNC_TOKEN` = the Render sync token
+   - `WRITE_TOKEN` = the Render write token
 4. Paste one fresh cookie first (Step 4), then let the Action take over
 
-The workflow runs at 00:00 and 12:00 UTC. If the session is dead and can't be renewed automatically, the Action fails and GitHub emails you — the signal to do a fresh paste.
+The workflow runs every six hours. If the session is dead and can't be renewed automatically, the Action fails and GitHub emails you — the signal to do a fresh paste.
 
 ---
 

@@ -18,13 +18,14 @@
 
   // ── CONFIG ─────────────────────────────────────────────────────────────────
   const TRACKER_URL = 'https://YOUR-SERVICE-NAME.onrender.com';
+  const WRITE_TOKEN = 'YOUR_WRITE_TOKEN';
 
   // ── Push to tracker ────────────────────────────────────────────────────────
   function pushToTracker(kind, data) {
     GM_xmlhttpRequest({
       method: 'POST',
       url: TRACKER_URL + '/api/push/mt5',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Write-Token': WRITE_TOKEN },
       data: JSON.stringify({ kind, data }),
       onerror: (e) => console.warn('[Bitget Tracker] push failed', e),
     });

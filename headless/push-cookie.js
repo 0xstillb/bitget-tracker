@@ -13,6 +13,7 @@ const { cookiesToString, pushCookieToTracker } = require('./cookie-bridge');
 
 async function main() {
     const trackerUrl = (process.env.TRACKER_URL || '').replace(/\/$/, '');
+    const writeToken = process.env.WRITE_TOKEN || '';
     if (!trackerUrl) {
         console.error('[Push] TRACKER_URL not set');
         process.exit(1);
@@ -25,7 +26,7 @@ async function main() {
         process.exit(1);
     }
     try {
-        const len = await pushCookieToTracker(trackerUrl, cookieStr);
+        const len = await pushCookieToTracker(trackerUrl, cookieStr, writeToken);
         console.log(`[Push] ✅ pushed cookie to tracker (${len} chars)`);
         process.exit(0);
     } catch (err) {

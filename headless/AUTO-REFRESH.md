@@ -69,6 +69,7 @@ In the Render dashboard for your service:
 | Key | Value |
 |-----|-------|
 | `COOKIE_SYNC_TOKEN` | the token from step 1 |
+| `WRITE_TOKEN` | a separate random token that protects tracker writes |
 
 Without this the export endpoint returns 404 and stays disabled.
 Redeploy the service after adding it.
@@ -84,6 +85,7 @@ Add **both** of these:
 |------|-------|
 | `TRACKER_URL` | `https://YOUR-SERVICE-NAME.onrender.com` |
 | `COOKIE_SYNC_TOKEN` | the same token from step 1 |
+| `WRITE_TOKEN` | the same write token configured in Render |
 
 These are **Repository secrets** (not environment secrets). The values are
 never exposed in logs even on a public repo.
@@ -146,6 +148,7 @@ cp .env.example .env        # first time only
 # edit .env — fill in:
 #   TRACKER_URL=https://YOUR-SERVICE-NAME.onrender.com
 #   COOKIE_SYNC_TOKEN=<your token>
+#   WRITE_TOKEN=<your tracker write token>
 #   BITGET_PHONE=<your phone number>      # optional — enables auto-login
 #   BITGET_PASSWORD=<your password>       # optional
 
@@ -179,6 +182,8 @@ You can also trigger it anytime:
 
 - `COOKIE_SYNC_TOKEN` is passed only via the `X-Sync-Token` **header** —
   never as a URL query param, which would appear in server logs.
+- `WRITE_TOKEN` is passed only via the `X-Write-Token` header and protects
+  state-changing and diagnostic administration endpoints.
 - `headless/data/cookies.txt` (the local session file) is gitignored — never
   committed.
 - If `COOKIE_SYNC_TOKEN` leaks: change it in both Render and GitHub Secrets,

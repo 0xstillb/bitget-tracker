@@ -3,6 +3,7 @@ const puppeteer = require('puppeteer');
 const path = require('path');
 
 const TRACKER_URL = process.env.TRACKER_URL || 'https://YOUR-SERVICE-NAME.onrender.com';
+const WRITE_TOKEN = process.env.WRITE_TOKEN || '';
 const BITGET_PAGE = process.env.BITGET_PAGE || 'https://www.bitget.com/copy-trading/mt5/follower/detail?portfolioId=YOUR_PORTFOLIO_ID';
 const PORTFOLIO_ID = process.env.PORTFOLIO_ID || 'YOUR_PORTFOLIO_ID';
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL_MS) || 60_000;
@@ -18,7 +19,7 @@ async function pushToTracker(kind, data) {
   try {
     const res = await fetch(TRACKER_URL + '/api/push/mt5', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(WRITE_TOKEN ? { 'X-Write-Token': WRITE_TOKEN } : {}) },
       body: JSON.stringify({ kind, data }),
     });
     if (!res.ok) log('push failed:', res.status);

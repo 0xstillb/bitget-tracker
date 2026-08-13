@@ -49,6 +49,7 @@ jobs:
         env:
           TRACKER_URL: ${{ secrets.TRACKER_URL }}
           COOKIE_SYNC_TOKEN: ${{ secrets.COOKIE_SYNC_TOKEN }}
+          WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
         run: node refresh-and-push.js
 
       # When the silent refresh fails the session is genuinely dead — turn the

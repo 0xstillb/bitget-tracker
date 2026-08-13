@@ -102,7 +102,6 @@ def get_status() -> dict:
     return {
         **_status,
         "has_cookie": bool(cookie_str),
-        "cookie_preview": (cookie_str[:40] + "...") if len(cookie_str) > 40 else cookie_str,
         "poll_interval_sec": POLL_INTERVAL,
         "traders": list(traders.keys()),
         "trader_types": trader_types,
@@ -421,10 +420,15 @@ async def _active_poll(page, push_fn: Callable,
     for trader_name, pid in traders.items():
         ttype = trader_types.get(trader_name, "cfd")
         logger.info("Polling history: trader=%s type=%s", trader_name, ttype)
-        if ttype == "futures":
-            await _poll_futures_history(page, push_fn, trader_name, pid)
-        else:
-            await _poll_cfd_history(page, push_fn, trader_name, pid)
+        try:
+            if ttype == "futures":
+                await _poll_futures_history(page, push_fn, trader_name, pid)
+            else:
+                await _poll_cfd_history(page, push_fn, trader_name, pid)
+        except Exception as e:
+            # One upstream endpoint must not prevent the remaining configured
+            # traders from being polled or make the cycle look stalled.
+            logger.warning("History poll[%s] failed: %s", trader_name, e)
 
     _status["last_poll"] = datetime.now(BKK).strftime("%Y-%m-%d %H:%M:%S")
     _status["polls"] += 1
