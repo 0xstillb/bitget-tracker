@@ -6,6 +6,7 @@ settings.json
 cookies.json
 credentials.json
 history.json
+snapshot.json
 traders.json
 *.pem
 *.key

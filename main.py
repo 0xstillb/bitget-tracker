@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from snapshot_store import SnapshotStore
 
 load_dotenv()
 
@@ -45,6 +46,8 @@ COOKIES_FILE     = Path(os.environ.get("COOKIES_PATH", "cookies.json"))
 TRADERS_FILE     = Path(os.environ.get("TRADERS_PATH", "traders.json"))
 CREDENTIALS_FILE = Path(os.environ.get("CREDENTIALS_PATH", "credentials.json"))
 HISTORY_FILE     = Path(os.environ.get("HISTORY_PATH", "history.json"))
+SNAPSHOT_FILE    = Path(os.environ.get("SNAPSHOT_PATH", "snapshot.json"))
+SNAPSHOT_STORE   = SnapshotStore(SNAPSHOT_FILE)
 
 _BALANCE_PATS = ("balance", "equity", "totalbal", "totalequity",
                  "totalasset", "accountval", "worth", "asset")
@@ -230,6 +233,52 @@ _futures_leader: dict = {
     "fetched_at": None,
     "error": None,
 }
+
+
+def _snapshot_session_state() -> str | None:
+    """Read only the poller's classification; it never includes cookie material."""
+    try:
+        from browser_poller import get_status
+        return get_status().get("session_state")
+    except Exception:
+        return None
+
+
+def _snapshot_payload() -> dict:
+    """Return viewer-safe normalized state, deliberately excluding raw API data."""
+    traders = []
+    for name in _trader_names():
+        summary = _traders_cache.get(name, {}).get("summary")
+        if isinstance(summary, dict):
+            traders.append(summary)
+    return {
+        "summary": _mt5["summary"] if isinstance(_mt5.get("summary"), dict) else {},
+        "traders": traders,
+    }
+
+
+def _persist_snapshot() -> bool:
+    return SNAPSHOT_STORE.save(_snapshot_payload(), session_state=_snapshot_session_state())
+
+
+def _restore_snapshot() -> None:
+    """Restore only safe last-good summaries; raw session and API data stay in memory."""
+    snapshot = SNAPSHOT_STORE.load()
+    if not snapshot:
+        return
+    data = snapshot["data"]
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        _mt5["summary"] = summary
+    for trader_summary in data.get("traders", []):
+        if not isinstance(trader_summary, dict):
+            continue
+        name = trader_summary.get("name")
+        if isinstance(name, str) and name in _trader_names():
+            _tc(name)["summary"] = trader_summary
+
+
+_restore_snapshot()
 
 
 # ── Time helpers ──────────────────────────────────────────────────────────────
@@ -738,6 +787,7 @@ def _push_data(kind: str, data, trader: str = None):
 
     try:
         _rebuild_summary()
+        _persist_snapshot()
     except Exception as e:
         logger.error("_rebuild_summary failed: %s", e)
 
