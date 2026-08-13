@@ -15,6 +15,7 @@ traders.json
 *.pfx
 secrets.h
 .pytest_cache/
+.pio/
 headless/browser-data/
 headless/node_modules/
 headless/.env
