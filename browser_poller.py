@@ -45,7 +45,62 @@ _status = {
     "auth_ok": None,   # None=unknown, True=working, False=cookie expired/CF blocked
     "last_pos_response": None,
     "last_hist_response": None,
+    "session_state": "unknown",
+    "session_verified_this_cycle": False,
 }
+
+_SESSION_SUCCESS_CODES = {"00000", "0", "200"}
+_SESSION_EXPIRED_MARKERS = ("expired", "login", "log in", "sign in")
+
+
+def classify_session_response(response: dict | BaseException) -> str:
+    """Classify a response from a known authenticated Bitget endpoint.
+
+    The caller must use an endpoint that requires the session.  A transport
+    failure is not evidence that a cookie expired, so transient outcomes never
+    invalidate the last-known-good session or authorize cookie persistence.
+    """
+    if isinstance(response, BaseException):
+        return "transient" if isinstance(response, (TimeoutError, asyncio.TimeoutError)) else "invalid"
+    if not isinstance(response, dict):
+        return "invalid"
+
+    status = response.get("status")
+    error = str(response.get("error") or "").lower()
+    msg = str(response.get("msg") or "").lower()
+    body = str(response.get("body") or "").lstrip().lower()
+
+    if status == 429 or (isinstance(status, int) and status >= 500):
+        return "transient"
+    if "timeout" in error or "timed out" in error:
+        return "transient"
+    if (isinstance(status, int) and 300 <= status < 400) or "redirect" in error:
+        return "expired"
+    if "html" in error or body.startswith("<!doctype html") or body.startswith("<html"):
+        return "expired"
+    if any(marker in f"{msg} {error}" for marker in _SESSION_EXPIRED_MARKERS):
+        return "expired"
+    if status == 200 and str(response.get("code")) in _SESSION_SUCCESS_CODES:
+        return "valid"
+    return "invalid"
+
+
+def _record_session_verification(response: dict | BaseException) -> str:
+    """Record the canonical session classification for the current poll cycle."""
+    classification = classify_session_response(response)
+    _status["session_state"] = classification
+    if classification == "valid":
+        _status["auth_ok"] = True
+        _status["session_verified_this_cycle"] = True
+    elif classification == "expired":
+        _status["auth_ok"] = False
+        _status["session_verified_this_cycle"] = False
+    elif classification == "invalid":
+        _status["auth_ok"] = None
+        _status["session_verified_this_cycle"] = False
+    else:  # transient
+        _status["session_verified_this_cycle"] = False
+    return classification
 
 
 def _load_traders() -> tuple[dict[str, str], dict[str, str]]:
@@ -94,6 +149,8 @@ def reset_auth_status() -> None:
     """Call when a new cookie is saved so stale auth_ok=False doesn't persist."""
     _status["auth_ok"] = None
     _status["last_error"] = None
+    _status["session_state"] = "unknown"
+    _status["session_verified_this_cycle"] = False
 
 
 def get_status() -> dict:
@@ -222,6 +279,9 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
                      traders: dict[str, str], trader_types: dict[str, str]):
     from playwright.async_api import async_playwright
 
+    _status["session_state"] = "unknown"
+    _status["session_verified_this_cycle"] = False
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
         try:
@@ -277,11 +337,10 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
             # cookies on active use; saving them after each authenticated cycle
             # keeps the session alive from this server's own IP instead of
             # relying on the external GitHub Actions refresher.
-            if _status.get("auth_ok"):
-                try:
-                    await _persist_refreshed_cookies(context)
-                except Exception as e:
-                    logger.warning("Cookie self-refresh persist failed: %s", e)
+            try:
+                await _persist_refreshed_cookies(context)
+            except Exception as e:
+                logger.warning("Cookie self-refresh persist failed: %s", e)
 
             logger.info("Poll cycle complete — closing browser")
         finally:
@@ -295,6 +354,11 @@ async def _persist_refreshed_cookies(context) -> None:
     overwrite a working cookie. Preserves local_storage and the user's
     'updated' timestamp; records self_refreshed_at separately.
     """
+    if (_status.get("session_state") != "valid"
+            or not _status.get("session_verified_this_cycle")):
+        logger.info("Skipping cookie persistence: no valid authenticated response this cycle")
+        return
+
     jar = await context.cookies("https://www.bitget.com")
     parts = [f"{c['name']}={c['value']}" for c in jar
              if "bitget.com" in c.get("domain", "")]
@@ -377,17 +441,12 @@ async def _probe_positions(page, push_fn: Callable,
                                    "code": code, "msg": msg or None,
                                    "rows": result.get("row_count"),
                                    "error": result.get("error")})
-                if isinstance(result, dict) and result.get("status") == 200:
-                    msg_lower = msg.lower()
-                    if "expired" in msg_lower or ("log" in msg_lower and "in" in msg_lower):
-                        # Bitget returns 200/00004 with this msg when the session
-                        # has expired — not a genuine "no positions" response.
-                        logger.info("CFD position probe: session expired (msg=%s)", msg)
-                        _status["auth_ok"] = False
-                        done = True
-                        break
-                    # 200 without expiry msg — cookie is alive
-                    _status["auth_ok"] = True
+                classification = _record_session_verification(result)
+                if classification == "expired":
+                    logger.info("CFD position probe: session expired (msg=%s)", msg)
+                    done = True
+                    break
+                if classification == "valid":
                     _mark_scrape()
                     if code in ("00000", "200", "0"):
                         logger.info("CFD positions found ep=%s body=%s rows=%s",
@@ -396,7 +455,7 @@ async def _probe_positions(page, push_fn: Callable,
                     else:
                         logger.info("CFD positions probe 200/%s (no positions) ep=%s body=%s",
                                     code, ep, label)
-                    done = True   # cookie confirmed — no need to probe more endpoints
+                    done = True   # authenticated session confirmed — no need to probe more endpoints
                     break
             except Exception as ex:
                 err_str = str(ex)
@@ -505,13 +564,13 @@ async def _poll_cfd_history(page, push_fn: Callable, trader_name: str, pid: str)
                     "msg": api_msg, "error": hist.get("error"),
                 }
 
-            if hist.get("error") == "html_redirect" or api_code == "00004":
-                _status["auth_ok"] = False
-                break
-            if hist.get("status") != 200 or api_code not in ("00000", "200", "0"):
+            classification = _record_session_verification({
+                "status": hist.get("status"), "code": api_code,
+                "msg": api_msg, "error": hist.get("error"),
+            })
+            if classification != "valid":
                 break
 
-            _status["auth_ok"] = True
             if batch == 0:
                 _mark_scrape()
 
@@ -594,17 +653,14 @@ async def _poll_futures_history(page, push_fn: Callable, trader_name: str, pid: 
                         result.get("data_keys"), result.get("error"))
             results.append({"ep": ep_short, "http": result.get("status"), "code": code,
                              "error": result.get("error"), "data_keys": result.get("data_keys")})
-            if result.get("error") == "html_redirect":
-                # Don't flip auth_ok — some futures probe endpoints are CF-blocked
-                # regardless of cookie health. Only CFD history controls auth status.
+            classification = _record_session_verification(result)
+            if classification != "valid":
                 continue
-            if result.get("status") == 200 and code in ("00000", "200", "0"):
-                _status["auth_ok"] = True
-                data = result.get("data")
-                if data:  # only stop probing if we actually got data
-                    push_fn("history", data, trader_name)
-                    _status[f"futures_hist_{trader_name}"] = results
-                    return
+            data = result.get("data")
+            if data:  # only stop probing if we actually got data
+                push_fn("history", data, trader_name)
+                _status[f"futures_hist_{trader_name}"] = results
+                return
         except Exception as e:
             ep_short = ep.split("/")[-1]
             logger.warning("Futures history[%s] %s error: %s", trader_name, ep_short, e)
@@ -653,11 +709,10 @@ async def _fetch_cfd_balances(page, push_fn: Callable, cfd_traders: dict):
         _status["last_balance_probes"] = {"getFollowPortfolios_all": {
             "http": result.get("status"), "code": code, "error": result.get("error")}}
 
-        if result.get("error") == "html_redirect" or code == "00004":
-            _status["auth_ok"] = False
-            logger.warning("CFD getFollowPortfolios all: auth failure code=%s", code)
-        elif result.get("status") == 200 and code in ("00000", "200", "0"):
-            _status["auth_ok"] = True
+        classification = _record_session_verification(result)
+        if classification == "expired":
+            logger.warning("CFD getFollowPortfolios all: expired session code=%s", code)
+        elif classification == "valid":
             details = (result.get("data") or {}).get("portfolioDetails") or []
             returned_pids = []
             matched = 0
@@ -703,10 +758,8 @@ async def _fetch_cfd_balances(page, push_fn: Callable, cfd_traders: dict):
             code = result.get("code") if isinstance(result, dict) else None
             _status["last_balance_probes"][f"cfd_{trader_name}"] = {
                 "http": result.get("status"), "code": code, "error": result.get("error")}
-            if result.get("error") == "html_redirect":
-                _status["auth_ok"] = False
-            elif result.get("status") == 200 and code in ("00000", "200", "0"):
-                _status["auth_ok"] = True
+            classification = _record_session_verification(result)
+            if classification == "valid":
                 details = (result.get("data") or {}).get("portfolioDetails") or []
                 if details and isinstance(details[0], dict):
                     push_fn("copy_details", details[0], trader_name)
@@ -756,38 +809,34 @@ async def _fetch_futures_balance(page, push_fn: Callable, trader_name: str, pid:
             logger.info("Futures balance[%s] %s: HTTP %s code=%s keys=%s err=%s",
                         trader_name, ep_short, result.get("status"), code,
                         result.get("data_keys"), result.get("error"))
-            if result.get("error") == "html_redirect":
-                # Don't flip auth_ok here — some probe endpoints are legitimately
-                # Cloudflare-blocked regardless of cookie health. auth_ok is set
-                # only by the CFD history poll which uses a confirmed working endpoint.
+            classification = _record_session_verification(result)
+            if classification != "valid":
                 continue
-            if result.get("status") == 200 and code in ("00000", "200", "0"):
-                _status["auth_ok"] = True
-                raw_data = result.get("data")
-                data = raw_data or {}
-                details = data.get("portfolioDetails") if isinstance(data, dict) else None
-                # open-position list — extract unrealized PnL as open_pnl
-                pos_list = (data if isinstance(data, list) else
-                            data.get("list") or data.get("rows") or []) if raw_data else []
-                if isinstance(details, list) and details:
-                    push_fn("copy_details", details[0], trader_name)
-                    _mark_scrape()
-                    _status[f"futures_balance_{trader_name}"] = results
-                    break  # found data, stop probing
-                elif isinstance(pos_list, list) and pos_list:
-                    total_upl = sum(float(p.get("profit") or p.get("unrealizedPnl") or
-                                         p.get("unrealizedPL") or 0) for p in pos_list
-                                    if isinstance(p, dict))
-                    push_fn("copy_details", {"floatProfit": total_upl}, trader_name)
-                    _mark_scrape()
-                    _status[f"futures_balance_{trader_name}"] = results
-                    break  # found data, stop probing
-                elif isinstance(data, dict) and data:
-                    push_fn("copy_details", data, trader_name)
-                    _mark_scrape()
-                    _status[f"futures_balance_{trader_name}"] = results
-                    break  # found data, stop probing
-                # data was empty — continue to next probe
+            raw_data = result.get("data")
+            data = raw_data or {}
+            details = data.get("portfolioDetails") if isinstance(data, dict) else None
+            # open-position list — extract unrealized PnL as open_pnl
+            pos_list = (data if isinstance(data, list) else
+                        data.get("list") or data.get("rows") or []) if raw_data else []
+            if isinstance(details, list) and details:
+                push_fn("copy_details", details[0], trader_name)
+                _mark_scrape()
+                _status[f"futures_balance_{trader_name}"] = results
+                break  # found data, stop probing
+            elif isinstance(pos_list, list) and pos_list:
+                total_upl = sum(float(p.get("profit") or p.get("unrealizedPnl") or
+                                     p.get("unrealizedPL") or 0) for p in pos_list
+                                if isinstance(p, dict))
+                push_fn("copy_details", {"floatProfit": total_upl}, trader_name)
+                _mark_scrape()
+                _status[f"futures_balance_{trader_name}"] = results
+                break  # found data, stop probing
+            elif isinstance(data, dict) and data:
+                push_fn("copy_details", data, trader_name)
+                _mark_scrape()
+                _status[f"futures_balance_{trader_name}"] = results
+                break  # found data, stop probing
+            # data was empty — continue to next probe
         except Exception as e:
             ep_short = ep.split("/")[-1]
             results.append({"ep": ep_short, "error": str(e)})
