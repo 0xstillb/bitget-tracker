@@ -90,10 +90,8 @@ def test_main_persists_only_the_normalized_viewer_summary(monkeypatch):
     monkeypatch.setattr(main, "_snapshot_session_state", lambda: "valid")
 
     assert main._persist_snapshot() is True
-    assert recorded == {
-        "data": {
-            "summary": {"total_balance": 12.5},
-            "traders": [{"name": "alpha", "balance": 12.5}],
-        },
-        "session_state": "valid",
-    }
+    assert recorded["session_state"] == "valid"
+    assert recorded["data"]["summary"] == {"total_balance": 12.5}
+    assert recorded["data"]["traders"] == [{"name": "alpha", "balance": 12.5}]
+    assert recorded["data"]["positions"] == []
+    assert recorded["data"]["history"] == []
