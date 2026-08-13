@@ -59,3 +59,10 @@ def test_cyd_has_a_reproducible_platformio_build_configuration():
     assert "-D USER_SETUP_LOADED" in config
     assert "-include User_Setup.h" in config
     assert ".pio/" in Path(".gitignore").read_text(encoding="utf-8")
+
+
+def test_cyd_tft_setup_loads_the_fonts_used_by_the_dashboard():
+    setup = Path("esp32/bitget_cyd/User_Setup.h").read_text(encoding="utf-8")
+
+    assert "#define LOAD_GLCD" in setup
+    assert "#define LOAD_FONT2" in setup
