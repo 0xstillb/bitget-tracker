@@ -19,6 +19,14 @@ _SECRET_MARKERS = (
 )
 
 
+def _safe_error_message(error: BaseException) -> str:
+    """Keep diagnostics bounded and redact messages that may contain secrets."""
+    message = str(error)
+    if any(marker in message.lower() for marker in _SECRET_MARKERS):
+        return f"{type(error).__name__}: details redacted"
+    return message[:256]
+
+
 def _sanitize(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -121,9 +129,10 @@ class PiViewer:
             return False
         try:
             snapshot = self.client.fetch()
-            if not self.cache.save(snapshot):
+            normalized = _normalize_snapshot(snapshot)
+            if normalized is None or not self.cache.save(normalized):
                 raise ValueError("Core returned an invalid snapshot")
-            self.snapshot = snapshot
+            self.snapshot = normalized
             self.failures = 0
             self.next_attempt = now + self.refresh_interval
             self.last_error = None
@@ -133,7 +142,7 @@ class PiViewer:
             self.failures += 1
             backoff = min(300, 2 ** (self.failures - 1))
             self.next_attempt = now + backoff
-            self.last_error = str(error)
+            self.last_error = _safe_error_message(error)
             return False
 
     def summary(self) -> dict | None:
@@ -144,6 +153,7 @@ class PiViewer:
         return {
             "ok": self.snapshot is not None,
             "cached": self.snapshot is not None,
+            "stale": self.snapshot is not None and self.last_error is not None,
             "last_success_at": self.last_success_at,
             "last_error": self.last_error,
             "backoff_seconds": min(300, 2 ** (self.failures - 1)) if self.failures else 0,
