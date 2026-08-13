@@ -1,0 +1,21 @@
+[Unit]
+Description=Bitget Tracker read-only Pi Viewer
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bitget-viewer
+WorkingDirectory=/opt/bitget-tracker
+EnvironmentFile=/etc/bitget-pi-viewer/viewer.env
+Environment=PI_VIEWER_CACHE_PATH=/var/lib/bitget-pi-viewer/viewer-cache.json
+ExecStart=/usr/bin/python3 /opt/bitget-tracker/pi_viewer.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/bitget-pi-viewer
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,7 @@ cookies.json
 credentials.json
 history.json
 snapshot.json
+viewer-cache.json
 traders.json
 *.pem
 *.key
