@@ -127,7 +127,7 @@ static void drawDashboard() {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("BITGET PI VIEWER", 6, 5);
   tft.setTextColor(online ? (coreFresh ? TFT_GREEN : TFT_YELLOW) : TFT_RED, TFT_BLACK);
-  tft.drawRightString(online ? (coreFresh ? "ONLINE" : "STALE") : "OFFLINE", 314, 5);
+  tft.drawRightString(online ? (coreFresh ? "ONLINE" : "STALE") : "OFFLINE", 314, 5, 1);
 
   char equity[28];
   formatUsd(equity, sizeof(equity), lastEquity);
@@ -137,7 +137,7 @@ static void drawDashboard() {
   tft.drawString("EQUITY", 12, 26);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
   tft.setTextSize(2);
-  tft.drawRightString(equity, 306, 34);
+  tft.drawRightString(equity, 306, 34, 2);
 
   drawCard(5, 64, 100, 48, "TODAY P&L", lastTodayPnl);
   drawCard(110, 64, 100, 48, "OPEN P&L", lastOpenPnl);
@@ -154,7 +154,7 @@ static void drawDashboard() {
   }
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   tft.drawString(String("Updated: ") + lastUpdated, 6, 218);
-  tft.drawRightString(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting", 314, 218);
+  tft.drawRightString(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting", 314, 218, 1);
 }
 
 static void loadConfiguration() {
