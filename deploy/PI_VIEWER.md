@@ -14,3 +14,6 @@ The native viewer routes are GET-only: `/`, `/api/v1/summary`, and
 `/api/esp32`, `/api/esp32/positions`, and `/api/esp32/history`.
 Use the Pi LAN address for ESP32 devices; keep the Core accessible only through
 the Task 04 Tailscale ACL.
+
+For mobile access, follow `CLOUDFLARE_VIEWER.md`. Publish only the Pi Viewer
+through Cloudflare Access/Tunnel; never publish Core or the login worker.
