@@ -33,6 +33,14 @@ def test_cyd_ui_has_simplified_status_pnl_equity_and_three_position_layout():
     assert "for (int index = 0; index < 3; ++index)" in source
 
 
+def test_cyd_ui_uses_tft_espi_compatible_right_aligned_text_calls():
+    source = FIRMWARE.read_text(encoding="utf-8")
+
+    assert '"OFFLINE", 314, 5, 1)' in source
+    assert "tft.drawRightString(equity, 306, 34, 2);" in source
+    assert '"Wi-Fi reconnecting", 314, 218, 1)' in source
+
+
 def test_cyd_templates_contain_no_real_wifi_or_service_secret():
     template = Path("esp32/bitget_cyd/secrets.example.h").read_text(encoding="utf-8")
 
