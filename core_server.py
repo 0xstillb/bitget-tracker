@@ -2,6 +2,7 @@
 
 import ipaddress
 import os
+from urllib.parse import urlsplit
 
 
 def validate_bind_host(host: str) -> str:
@@ -18,3 +19,28 @@ def validate_bind_host(host: str) -> str:
 
 def bind_host_from_env() -> str:
     return validate_bind_host(os.environ.get("CORE_BIND_HOST", "127.0.0.1"))
+
+
+def parse_cors_origins(raw: str) -> tuple[str, ...]:
+    """Accept only explicit HTTP(S) origins without credentials or URL paths."""
+    origins: list[str] = []
+    for candidate in raw.split(","):
+        origin = candidate.strip().rstrip("/")
+        if not origin:
+            continue
+        parsed = urlsplit(origin)
+        if (
+            origin == "*"
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("CORE_CORS_ORIGINS must contain only explicit HTTP(S) origins")
+        origins.append(origin)
+    if not origins:
+        raise ValueError("CORE_CORS_ORIGINS must contain at least one explicit origin")
+    return tuple(dict.fromkeys(origins))

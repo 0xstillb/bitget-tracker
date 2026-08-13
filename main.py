@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from core_server import parse_cors_origins
 from snapshot_store import SnapshotStore
 
 load_dotenv()
@@ -27,10 +28,7 @@ logger = logging.getLogger(__name__)
 BKK = timezone(timedelta(hours=7))
 WRITE_TOKEN = os.environ.get("WRITE_TOKEN", "")
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
-CORE_CORS_ORIGINS = tuple(
-    origin.strip() for origin in os.environ.get("CORE_CORS_ORIGINS", "http://localhost").split(",")
-    if origin.strip()
-)
+CORE_CORS_ORIGINS = parse_cors_origins(os.environ.get("CORE_CORS_ORIGINS", "http://localhost"))
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
@@ -1072,6 +1070,23 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "X-Internal-Token", "X-Write-Token"],
 )
+
+
+@app.middleware("http")
+async def add_core_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; object-src 'none'; connect-src 'self'; "
+        "font-src 'self'; img-src 'self' data:; "
+        "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    )
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
