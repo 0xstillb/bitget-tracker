@@ -16,3 +16,6 @@ The systemd unit keeps runtime state in `/var/lib/bitget-tracker`, the only
 writable path granted by its service sandbox. Create that directory, make it
 owned by the `bitget` user, and store `/etc/bitget-tracker/core.env` with mode
 `0600` before enabling the service.
+
+Follow `DEPLOYMENT.md` for release layout, resource limits, validation, logs,
+and rollback. `compose.vps.example.yml` is an optional VPS-only alternative.

@@ -17,3 +17,6 @@ the Task 04 Tailscale ACL.
 
 For mobile access, follow `CLOUDFLARE_VIEWER.md`. Publish only the Pi Viewer
 through Cloudflare Access/Tunnel; never publish Core or the login worker.
+
+Follow `DEPLOYMENT.md` for Pi coexistence checks, resource limits, logging, and
+rollback. The Viewer deployment must not alter Grimmory, moOde, or audio services.

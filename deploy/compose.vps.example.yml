@@ -1,0 +1,36 @@
+services:
+  core:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/bitget-tracker/core.env
+    environment:
+      COOKIES_PATH: /var/lib/bitget-tracker/cookies.json
+      SETTINGS_PATH: /var/lib/bitget-tracker/settings.json
+      TRADERS_PATH: /var/lib/bitget-tracker/traders.json
+      HISTORY_PATH: /var/lib/bitget-tracker/history.json
+      SNAPSHOT_PATH: /var/lib/bitget-tracker/snapshot.json
+      CREDENTIALS_PATH: /var/lib/bitget-tracker/credentials.json
+      ALERT_STATE_PATH: /var/lib/bitget-tracker/alert-state.json
+    volumes:
+      - /var/lib/bitget-tracker:/var/lib/bitget-tracker
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    shm_size: 512m
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: "2.0"
+    pids_limit: 512
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
