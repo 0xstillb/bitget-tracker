@@ -51,10 +51,13 @@ async function pullCookieFromTracker(trackerUrl, token) {
 }
 
 /** Push a cookie string to the tracker (open POST, same as the dashboard). */
-async function pushCookieToTracker(trackerUrl, cookieStr) {
+async function pushCookieToTracker(trackerUrl, cookieStr, writeToken) {
     const res = await fetch(`${trackerUrl}/api/poller/cookie`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...(writeToken ? { 'X-Write-Token': writeToken } : {}),
+        },
         body: JSON.stringify({ cookie: cookieStr }),
     });
     if (!res.ok) {

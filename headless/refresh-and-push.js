@@ -34,6 +34,7 @@ const {
 async function main() {
     const trackerUrl = (process.env.TRACKER_URL || '').replace(/\/$/, '');
     const token = process.env.COOKIE_SYNC_TOKEN || '';
+    const writeToken = process.env.WRITE_TOKEN || '';
 
     if (!trackerUrl) {
         console.error('[Refresh] TRACKER_URL not set');
@@ -69,7 +70,7 @@ async function main() {
     try {
         const cookies = readLocalCookies();
         const cookieStr = cookiesToString(cookies);
-        const len = await pushCookieToTracker(trackerUrl, cookieStr);
+        const len = await pushCookieToTracker(trackerUrl, cookieStr, writeToken);
         console.log(`[Refresh] pushed renewed cookie to tracker (${len} chars)`);
         if (result.newExpiry) console.log(`[Refresh] new expiry: ${result.newExpiry}`);
         console.log('[Refresh] ✅ done');
