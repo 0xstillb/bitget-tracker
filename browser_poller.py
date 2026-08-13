@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import random
+import tempfile
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable
@@ -14,6 +16,7 @@ logger = logging.getLogger(__name__)
 BKK = timezone(timedelta(hours=7))
 BITGET_BASE = "https://www.bitget.com"
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SEC", "30"))
+COOKIE_RENEWAL_THRESHOLD_SEC = int(os.environ.get("COOKIE_RENEWAL_THRESHOLD_SEC", "21600"))
 COOKIES_FILE = Path(os.environ.get("COOKIES_PATH", "cookies.json"))
 TRADERS_FILE = Path(os.environ.get("TRADERS_PATH", "traders.json"))
 ALERT_STATE_FILE = Path(os.environ.get("ALERT_STATE_PATH", "alert-state.json"))
@@ -346,14 +349,14 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
             await _active_poll(page, push_fn, traders, trader_types)
             await _fetch_balance(page, push_fn, traders, trader_types)
 
-            # Persist the refreshed cookie jar. Bitget rotates/extends session
-            # cookies on active use; saving them after each authenticated cycle
-            # keeps the session alive from this server's own IP instead of
-            # relying on the external GitHub Actions refresher.
+            # Renew expiring cookies while the authenticated Playwright session
+            # is still valid. The replacement is verified before it can replace
+            # the last-good cookie on disk.
             try:
-                await _persist_refreshed_cookies(context)
+                first_portfolio_id = next(iter(traders.values()), "")
+                await _renew_expiring_cookie(page, context, first_portfolio_id)
             except Exception as e:
-                logger.warning("Cookie self-refresh persist failed: %s", e)
+                logger.warning("Proactive cookie renewal failed: %s", e)
 
             logger.info("Poll cycle complete — closing browser")
         finally:
@@ -372,12 +375,62 @@ async def _persist_refreshed_cookies(context) -> None:
         logger.info("Skipping cookie persistence: no valid authenticated response this cycle")
         return
 
+    await _persist_verified_cookie_jar(context, {"status": 200, "code": "00000"})
+
+
+def _cookie_renewal_due(cookie_jar: list[dict], *, now: float | None = None,
+                        threshold_seconds: int = COOKIE_RENEWAL_THRESHOLD_SEC) -> bool:
+    """Return whether the expiring authenticated session should be refreshed."""
+    now = time.time() if now is None else now
+    for cookie in cookie_jar:
+        if cookie.get("name") != "bt_newsessionid":
+            continue
+        try:
+            expires = float(cookie.get("expires", -1))
+        except (TypeError, ValueError):
+            return False
+        return expires > 0 and expires - now <= threshold_seconds
+    return False
+
+
+async def _renew_expiring_cookie(page, context, portfolio_id: str) -> bool:
+    """Refresh and persist a near-expiry cookie only after canonical verification."""
     jar = await context.cookies("https://www.bitget.com")
-    parts = [f"{c['name']}={c['value']}" for c in jar
-             if "bitget.com" in c.get("domain", "")]
+    if not _cookie_renewal_due(jar):
+        return False
+
+    logger.info("Proactively renewing an expiring Bitget session cookie")
+    await page.goto(f"{BITGET_BASE}/about", wait_until="domcontentloaded", timeout=30_000)
+    verification = await page.evaluate("""async (portfolioId) => {
+        try {
+            const response = await fetch('/v1/trace/mt5/data/tracePosition', {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({portfolioId}),
+            });
+            const text = await response.text();
+            if (text.trimStart().startsWith('<')) return {status: response.status, error: 'html_redirect'};
+            const payload = JSON.parse(text);
+            return {status: response.status, code: payload?.code, msg: payload?.msg};
+        } catch (error) {
+            return {status: 0, error: String(error)};
+        }
+    }""", portfolio_id)
+    return await _persist_verified_cookie_jar(context, verification)
+
+
+async def _persist_verified_cookie_jar(context, verification: dict | BaseException) -> bool:
+    """Atomically store a browser cookie jar only after canonical verification."""
+    if classify_session_response(verification) != "valid":
+        logger.info("Skipping cookie replacement: canonical verification did not succeed")
+        return False
+
+    jar = await context.cookies("https://www.bitget.com")
+    parts = [f"{cookie['name']}={cookie['value']}" for cookie in jar
+             if "bitget.com" in cookie.get("domain", "")]
     new_str = "; ".join(parts)
     if not new_str or "bt_newsessionid" not in new_str:
-        return  # incomplete jar — keep what we have
+        return False  # incomplete jar — keep what we have
 
     payload: dict = {}
     if COOKIES_FILE.exists():
@@ -386,11 +439,34 @@ async def _persist_refreshed_cookies(context) -> None:
         except (json.JSONDecodeError, OSError):
             payload = {}
     if payload.get("cookie") == new_str:
-        return  # nothing changed
+        return False  # nothing changed
     payload["cookie"] = new_str
     payload["self_refreshed_at"] = datetime.now(BKK).isoformat()
-    COOKIES_FILE.write_text(json.dumps(payload))
+    _atomic_write_cookie_payload(payload)
     logger.info("Self-refreshed cookie persisted (%d chars)", len(new_str))
+    return True
+
+
+def _atomic_write_cookie_payload(payload: dict) -> None:
+    """Replace the cookie file atomically so a failed renewal keeps last-good state."""
+    COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=COOKIES_FILE.parent,
+            prefix=f".{COOKIES_FILE.name}.", suffix=".tmp", delete=False,
+        ) as temporary:
+            json.dump(payload, temporary)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_name = temporary.name
+        os.replace(temporary_name, COOKIES_FILE)
+    finally:
+        if temporary_name:
+            try:
+                Path(temporary_name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # ── Positions probe (runs early, right after /about warmup) ──────────────────
