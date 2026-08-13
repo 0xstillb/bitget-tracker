@@ -1,0 +1,26 @@
+[Unit]
+Description=Bitget Tracker private Core API
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bitget
+WorkingDirectory=/opt/bitget-tracker
+EnvironmentFile=/etc/bitget-tracker/core.env
+Environment=COOKIES_PATH=/var/lib/bitget-tracker/cookies.json
+Environment=SETTINGS_PATH=/var/lib/bitget-tracker/settings.json
+Environment=TRADERS_PATH=/var/lib/bitget-tracker/traders.json
+Environment=HISTORY_PATH=/var/lib/bitget-tracker/history.json
+Environment=SNAPSHOT_PATH=/var/lib/bitget-tracker/snapshot.json
+Environment=CREDENTIALS_PATH=/var/lib/bitget-tracker/credentials.json
+ExecStart=/usr/bin/python3 /opt/bitget-tracker/run_core.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/bitget-tracker
+
+[Install]
+WantedBy=multi-user.target
