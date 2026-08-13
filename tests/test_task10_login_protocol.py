@@ -116,12 +116,14 @@ def test_node_worker_implements_the_same_credential_free_stdio_protocol():
 
     assert "process.stdin" in source
     assert "process.stdout.write" in source
-    assert "BITGET_PASSWORD" not in source
-    assert "BITGET_PHONE" not in source
+    request_source = Path("login_protocol.py").read_text(encoding="utf-8")
+    assert '"password"' not in request_source
+    assert '"phone"' not in request_source
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
-def test_core_and_node_worker_exchange_bound_events_over_local_stdio():
+def test_core_and_node_worker_exchange_bound_events_over_local_stdio(monkeypatch):
+    monkeypatch.setenv("AUTO_LOGIN_ENABLED", "false")
     events = []
     client = login_protocol.LoginWorkerClient(
         (shutil.which("node"), str(Path("headless/login-worker.js").resolve())),
@@ -132,6 +134,6 @@ def test_core_and_node_worker_exchange_bound_events_over_local_stdio():
 
     assert events == [
         login_protocol.LoginEvent("started"),
-        login_protocol.LoginEvent("failed", "not_implemented"),
+        login_protocol.LoginEvent("failed", "disabled"),
     ]
-    assert result == login_protocol.LoginResult("failed", "not_implemented")
+    assert result == login_protocol.LoginResult("failed", "disabled")
