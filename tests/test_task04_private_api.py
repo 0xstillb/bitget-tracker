@@ -66,6 +66,7 @@ def test_private_deployment_examples_do_not_publish_the_core():
     assert "0.0.0.0" not in dockerfile
     assert "run_core.py" in dockerfile
     assert "tag:bitget-viewer" in acl
-    assert "tag:bitget-core:10000" in acl
+    assert '"dst": ["tag:bitget-core"]' in acl
+    assert '"ip": ["tcp:10000"]' in acl
     assert "EnvironmentFile=/etc/bitget-tracker/core.env" in service
     assert "Environment=SNAPSHOT_PATH=/var/lib/bitget-tracker/snapshot.json" in service

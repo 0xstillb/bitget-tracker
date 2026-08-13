@@ -29,10 +29,19 @@ def parse_cors_origins(raw: str) -> tuple[str, ...]:
         if not origin:
             continue
         parsed = urlsplit(origin)
+        try:
+            parsed.port
+        except ValueError as error:
+            raise ValueError(
+                "CORE_CORS_ORIGINS must contain only explicit HTTP(S) origins"
+            ) from error
         if (
             origin == "*"
+            or any(character.isspace() for character in origin)
+            or "\\" in origin
             or parsed.scheme not in {"http", "https"}
             or not parsed.hostname
+            or parsed.netloc.endswith(":")
             or parsed.username is not None
             or parsed.password is not None
             or parsed.path

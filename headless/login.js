@@ -362,7 +362,7 @@ async function waitForLoginSuccess(page, timeout) {
             const url = page.url();
             if (url.includes('bitget.com') && !url.includes('/login') && !url.includes('/signin')) {
                 await sleep(3000);
-                return true;
+                if (await isSessionAuthenticated(page)) return true;
             }
         } catch {
             return false;

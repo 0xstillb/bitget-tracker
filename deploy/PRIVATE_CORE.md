@@ -1,5 +1,7 @@
 # Private Core deployment
 
+Use `INSTALL_VPS.md` for the complete first-install and upgrade procedure.
+
 Run the Core API only on the VPS. Set `CORE_BIND_HOST` to its Tailscale
 `100.64.0.0/10` address (or `127.0.0.1` for local testing), set distinct
 `WRITE_TOKEN` and `INTERNAL_API_TOKEN` values, then install the systemd example.

@@ -1,5 +1,9 @@
 # VPS Core and Pi Viewer deployment
 
+For a new installation, follow `INSTALL_VPS.md` first and then
+`INSTALL_PI.md`. This document is the shared architecture, operations, and
+rollback reference.
+
 Use one deployment method per host: systemd is preferred for both machines;
 `compose.vps.example.yml` is an alternative for Core on the VPS only. Do not
 run Chromium or the Compose Core service on the Pi.

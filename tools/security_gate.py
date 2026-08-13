@@ -93,8 +93,14 @@ def check_exposure_and_xss() -> None:
     if "service: http://127.0.0.1:8080" not in tunnel or "10000" in tunnel:
         fail("Tunnel must expose only the loopback Pi Viewer")
     acl = read("deploy/tailscale-acl.example.hujson")
-    if '"src": ["tag:bitget-viewer"]' not in acl or '"dst": ["tag:bitget-core:10000"]' not in acl:
-        fail("Tailscale ACL is broader than Viewer-to-Core")
+    required_grant = (
+        '"grants"',
+        '"src": ["tag:bitget-viewer"]',
+        '"dst": ["tag:bitget-core"]',
+        '"ip": ["tcp:10000"]',
+    )
+    if any(fragment not in acl for fragment in required_grant) or '"acls"' in acl:
+        fail("Tailscale grants must allow only Viewer-to-Core TCP 10000")
     dashboard = read("static/index.html")
     for fragment in ("${p.symbol}", "${t.symbol}", "${it.coin}", "${res.error || 'unknown'}"):
         if fragment in dashboard:

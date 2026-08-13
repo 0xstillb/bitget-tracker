@@ -44,6 +44,19 @@ flowchart TD
 - The public price feed (XAU/USD) stays live even when your cookie expires, so open position PnL is always current
 - Render's free tier sleeps after 15 min of inactivity — use UptimeRobot to keep it awake
 
+## Recommended private deployment
+
+The production topology is a private Core on a VPS plus a read-only Viewer on
+a Raspberry Pi. Core is reachable only through Tailscale; only the Pi Viewer
+may be published through Cloudflare Access. Follow the complete guides:
+
+- [VPS Core installation](deploy/INSTALL_VPS.md)
+- [Raspberry Pi Viewer installation](deploy/INSTALL_PI.md)
+- [Deployment architecture, validation, and rollback](deploy/DEPLOYMENT.md)
+
+The Render instructions below are retained for the original single-host setup.
+They are not the recommended deployment when using the private VPS/Pi topology.
+
 ---
 
 ## Deploy your own instance

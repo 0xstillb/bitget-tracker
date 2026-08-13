@@ -1,5 +1,7 @@
 # Pi Viewer deployment
 
+Use `INSTALL_PI.md` for the complete first-install and upgrade procedure.
+
 The Pi runs only `pi_viewer.py`: a GET-only LAN service that fetches the Core
 snapshot through Tailscale, keeps an atomic local cache, and serves cached data
 when the Core is unavailable. It does not run Chromium, Playwright, or Bitget
