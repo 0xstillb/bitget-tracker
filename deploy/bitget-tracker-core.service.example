@@ -1,12 +1,15 @@
 [Unit]
 Description=Bitget Tracker private Core API
 After=network-online.target tailscaled.service
-Wants=network-online.target
+Wants=network-online.target tailscaled.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=bitget
-WorkingDirectory=/opt/bitget-tracker
+Group=bitget
+WorkingDirectory=/opt/bitget-tracker/current
 EnvironmentFile=/etc/bitget-tracker/core.env
 Environment=COOKIES_PATH=/var/lib/bitget-tracker/cookies.json
 Environment=SETTINGS_PATH=/var/lib/bitget-tracker/settings.json
@@ -15,12 +18,25 @@ Environment=HISTORY_PATH=/var/lib/bitget-tracker/history.json
 Environment=SNAPSHOT_PATH=/var/lib/bitget-tracker/snapshot.json
 Environment=CREDENTIALS_PATH=/var/lib/bitget-tracker/credentials.json
 Environment=ALERT_STATE_PATH=/var/lib/bitget-tracker/alert-state.json
-ExecStart=/usr/bin/python3 /opt/bitget-tracker/run_core.py
+ExecStart=/usr/bin/python3 /opt/bitget-tracker/current/run_core.py
 Restart=on-failure
 RestartSec=5
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=512
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 ReadWritePaths=/var/lib/bitget-tracker
 
 [Install]
