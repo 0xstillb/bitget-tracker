@@ -38,7 +38,7 @@ DASHBOARD_CSS = """:root{color-scheme:dark;--bg:#08111f;--panel:#111d30;--line:#
 DASHBOARD_JS = """const money=new Intl.NumberFormat(undefined,{style:"currency",currency:"USD",maximumFractionDigits:2});
 const number=new Intl.NumberFormat(undefined,{maximumFractionDigits:0});
 const byId=id=>document.getElementById(id);
-const value=(item,key,fallback=0)=>Number(item&&item[key]??fallback)||0;
+const value=(item,key,fallback=0)=>Number((item&&item[key])??fallback)||0;
 const setText=(id,text)=>{byId(id).textContent=text};
 const signed=value=>`${value>0?"+":""}${money.format(value)}`;
 function setPnl(id,amount){const node=byId(id);node.textContent=signed(amount);node.classList.toggle("positive",amount>0);node.classList.toggle("negative",amount<0)}
