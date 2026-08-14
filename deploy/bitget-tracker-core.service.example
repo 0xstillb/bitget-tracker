@@ -18,7 +18,8 @@ Environment=HISTORY_PATH=/var/lib/bitget-tracker/history.json
 Environment=SNAPSHOT_PATH=/var/lib/bitget-tracker/snapshot.json
 Environment=CREDENTIALS_PATH=/var/lib/bitget-tracker/credentials.json
 Environment=ALERT_STATE_PATH=/var/lib/bitget-tracker/alert-state.json
-ExecStart=/usr/bin/python3 /opt/bitget-tracker/current/run_core.py
+Environment=PLAYWRIGHT_BROWSERS_PATH=/var/lib/bitget-tracker/ms-playwright
+ExecStart=/opt/bitget-tracker/current/.venv/bin/python /opt/bitget-tracker/current/run_core.py
 Restart=on-failure
 RestartSec=5
 UMask=0077

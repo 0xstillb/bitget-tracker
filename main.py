@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from core_server import parse_cors_origins
 from snapshot_store import SnapshotStore
+from state_io import atomic_write_json
 
 load_dotenv()
 
@@ -103,7 +104,7 @@ def _load_traders_list() -> list[dict]:
 
 
 def _save_traders_list(traders: list[dict]) -> None:
-    TRADERS_FILE.write_text(json.dumps({"traders": traders}))
+    atomic_write_json(TRADERS_FILE, {"traders": traders})
 
 
 # Module-level mutable list — the single source of truth for main.py
@@ -145,7 +146,7 @@ def _load_settings() -> dict:
 
 
 def _save_settings(s: dict) -> None:
-    SETTINGS_FILE.write_text(json.dumps(s))
+    atomic_write_json(SETTINGS_FILE, s)
 
 
 _settings = _load_settings()
@@ -173,7 +174,7 @@ def _save_history(trader: str, rows: list) -> None:
             except (json.JSONDecodeError, OSError):
                 pass
         data[trader] = rows
-        HISTORY_FILE.write_text(json.dumps(data))
+        atomic_write_json(HISTORY_FILE, data)
     except OSError as e:
         logger.warning("Could not save history.json: %s", e)
 
@@ -1037,12 +1038,11 @@ async def _futures_leader_poller():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     env_cookie = os.environ.get("BITGET_COOKIE", "")
-    cookie_path = Path(os.environ.get("COOKIES_PATH", "cookies.json"))
-    if env_cookie and not cookie_path.exists():
-        cookie_path.write_text(json.dumps({
+    if env_cookie and not COOKIES_FILE.exists():
+        atomic_write_json(COOKIES_FILE, {
             "cookie": env_cookie,
             "updated": "from-env-var",
-        }))
+        })
         logger.info("Restored cookie from BITGET_COOKIE env var (%d chars)", len(env_cookie))
 
     from browser_poller import start_poller
@@ -1633,12 +1633,12 @@ async def save_credentials(request: Request):
     passphrase = body.get("passphrase", "").strip()
     if not api_key or not secret or not passphrase:
         return {"ok": False, "error": "api_key, secret and passphrase are all required"}
-    CREDENTIALS_FILE.write_text(json.dumps({
+    atomic_write_json(CREDENTIALS_FILE, {
         "api_key": api_key,
         "secret": secret,
         "passphrase": passphrase,
         "updated": datetime.now(BKK).isoformat(),
-    }))
+    })
     logger.info("API credentials saved")
     asyncio.create_task(_refresh_investment())
     asyncio.create_task(_refresh_earn())
@@ -1715,7 +1715,7 @@ async def set_poller_cookie(request: Request):
                     len(cookie), len(local_storage))
     else:
         logger.info("Poller cookie updated (%d chars)", len(cookie))
-    COOKIES_FILE.write_text(json.dumps(payload))
+    atomic_write_json(COOKIES_FILE, payload)
     from browser_poller import reset_auth_status
     reset_auth_status()
     return {"ok": True, "length": len(cookie)}

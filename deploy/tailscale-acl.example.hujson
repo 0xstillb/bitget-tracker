@@ -5,11 +5,11 @@
     "tag:bitget-core": ["autogroup:admin"],
     "tag:bitget-viewer": ["autogroup:admin"],
   },
-  "acls": [
+  "grants": [
     {
-      "action": "accept",
       "src": ["tag:bitget-viewer"],
-      "dst": ["tag:bitget-core:10000"],
+      "dst": ["tag:bitget-core"],
+      "ip": ["tcp:10000"],
     },
   ],
 }

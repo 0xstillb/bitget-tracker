@@ -1,5 +1,6 @@
 """A lightweight, GET-only Pi Viewer for the private Core snapshot API."""
 
+import ipaddress
 import json
 import os
 import tempfile
@@ -9,7 +10,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -17,6 +18,36 @@ _SECRET_MARKERS = (
     "api_key", "authorization", "cookie", "credential", "local_storage",
     "passphrase", "password", "secret", "token",
 )
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Never forward the internal token to a redirected destination."""
+
+    def redirect_request(self, _request, _file_pointer, _code, _message, _headers, _new_url):
+        return None
+
+
+def _validate_core_snapshot_url(url: str) -> str:
+    """Allow the internal token only to the canonical private Core endpoint."""
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+        address = ipaddress.ip_address(parsed.hostname or "")
+    except ValueError as error:
+        raise ValueError("CORE_SNAPSHOT_URL must be the private Core snapshot endpoint") from error
+    tailscale = isinstance(address, ipaddress.IPv4Address) and address in ipaddress.ip_network("100.64.0.0/10")
+    if (
+        parsed.scheme != "http"
+        or not (address.is_loopback or tailscale)
+        or port != 10000
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/internal/v1/snapshot"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("CORE_SNAPSHOT_URL must be the private Core snapshot endpoint")
+    return url
 
 
 def _safe_error_message(error: BaseException) -> str:
@@ -92,7 +123,7 @@ class CoreSnapshotClient:
     """Fetch only the Core's read-only snapshot using the Pi's internal token."""
 
     def __init__(self, url: str, token: str, timeout: float = 5.0):
-        self.url = url
+        self.url = _validate_core_snapshot_url(url)
         self.token = token
         self.timeout = timeout
 
@@ -100,7 +131,7 @@ class CoreSnapshotClient:
         if not self.url or not self.token:
             raise RuntimeError("Core snapshot URL or internal token is not configured")
         request = Request(self.url, headers={"X-Internal-Token": self.token, "Accept": "application/json"})
-        with urlopen(request, timeout=self.timeout) as response:  # noqa: S310 - URL is operator configuration
+        with build_opener(_NoRedirectHandler).open(request, timeout=self.timeout) as response:
             snapshot = json.loads(response.read().decode("utf-8"))
         normalized = _normalize_snapshot(snapshot)
         if normalized is None:

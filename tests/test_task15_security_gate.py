@@ -155,10 +155,12 @@ def test_exposure_acl_and_browser_isolation_remain_narrow():
     worker = _read("headless/login-worker.js").lower()
 
     assert '"src": ["tag:bitget-viewer"]' in acl
-    assert '"dst": ["tag:bitget-core:10000"]' in acl
+    assert '"dst": ["tag:bitget-core"]' in acl
+    assert '"ip": ["tcp:10000"]' in acl
     assert "service: http://127.0.0.1:8080" in tunnel and "10000" not in tunnel
     assert '"password"' not in protocol and '"phone"' not in protocol
-    assert "mt5" not in worker
+    for forbidden in ("placeorder", "place_order", "closeposition", "cancelorder", "modify_sl"):
+        assert forbidden not in worker
 
 
 def test_release_checklist_covers_recovery_rollback_and_manual_host_validation():

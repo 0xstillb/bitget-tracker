@@ -148,10 +148,11 @@ def test_login_page_states_are_detected_without_security_bypass():
     }
 
 
-def test_worker_contains_no_otp_captcha_or_mt5_automation():
+def test_worker_contains_no_otp_captcha_or_trade_execution_automation():
     source = Path("headless/login-worker.js").read_text(encoding="utf-8").lower()
 
     assert "bitget_otp" not in source
     assert "captcha_token" not in source
     assert "solvecaptcha" not in source
-    assert "mt5" not in source
+    for forbidden in ("placeorder", "place_order", "closeposition", "cancelorder", "modify_sl"):
+        assert forbidden not in source

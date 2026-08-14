@@ -170,7 +170,29 @@ async function hasAuthenticatedSession(page) {
   const url = page.url().toLowerCase();
   if (!url.includes('bitget.com') || url.includes('/login') || url.includes('/signin')) return false;
   const cookies = await page.cookies('https://www.bitget.com');
-  return cookies.some(cookie => AUTH_COOKIE_NAMES.has(cookie.name) && Boolean(cookie.value));
+  if (!cookies.some(cookie => AUTH_COOKIE_NAMES.has(cookie.name) && Boolean(cookie.value))) return false;
+  try {
+    return await page.evaluate(async () => {
+      try {
+        const response = await fetch('/v1/trace/mt5/trace/getFollowPortfolios', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const text = await response.text();
+        if (text.trimStart().startsWith('<')) return false;
+        const payload = JSON.parse(text);
+        const message = String(payload && payload.msg ? payload.msg : '').toLowerCase();
+        if (message.includes('expired') || message.includes('re-log') || message.includes('log in')) return false;
+        return ['00000', '200', '0'].includes(String(payload && payload.code));
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 async function captureSnapshot(page) {
@@ -306,4 +328,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { classifyLoginSnapshot, emit, parseRequest, readConfig, runRequest };
+module.exports = {
+  classifyLoginSnapshot,
+  emit,
+  hasAuthenticatedSession,
+  parseRequest,
+  readConfig,
+  runRequest,
+};

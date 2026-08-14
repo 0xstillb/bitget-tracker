@@ -103,12 +103,13 @@ def test_core_client_sends_only_the_internal_token_header(monkeypatch):
         def read(self):
             return json.dumps(snapshot()).encode()
 
-    def fake_urlopen(request, timeout):
-        captured["headers"] = dict(request.header_items())
-        captured["timeout"] = timeout
-        return Response()
+    class Opener:
+        def open(self, request, timeout):
+            captured["headers"] = dict(request.header_items())
+            captured["timeout"] = timeout
+            return Response()
 
-    monkeypatch.setattr("pi_viewer.urlopen", fake_urlopen)
+    monkeypatch.setattr("pi_viewer.build_opener", lambda *_handlers: Opener())
     result = CoreSnapshotClient("http://100.64.0.1:10000/internal/v1/snapshot", "viewer-token", timeout=3).fetch()
 
     assert result["version"] == 1
