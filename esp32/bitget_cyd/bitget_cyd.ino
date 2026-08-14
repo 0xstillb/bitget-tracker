@@ -10,17 +10,12 @@
 #include <XPT2046_Touchscreen.h>
 #include <SPI.h>
 
-#if __has_include("secrets.h")
-#include "secrets.h"
-#else
-static const char *WIFI_SSID = "YOUR_WIFI_SSID";
-static const char *WIFI_PASS = "YOUR_WIFI_PASSWORD";
-static const char *PI_VIEWER_URL = "http://192.168.1.10:8080";
-#endif
-
 static const uint16_t SCREEN_WIDTH = 320;
 static const uint16_t SCREEN_HEIGHT = 240;
 static const uint32_t FETCH_INTERVAL_MS = 30000;
+static const uint32_t USB_PROVISIONING_WINDOW_MS = 120000;
+static const size_t SERIAL_LINE_MAX = 512;
+static const char *DEFAULT_VIEWER_URL = "http://192.168.1.121:8080";
 
 // A small, high-contrast palette keeps the dashboard readable on the CYD.
 static const uint16_t COLOR_BACKGROUND = 0x0841;
@@ -56,7 +51,113 @@ uint8_t lastPositionCount = 0;
 String lastUpdated = "--:--";
 bool coreFresh = false;
 bool online = false;
+bool configured = false;
 uint32_t lastFetchAt = 0;
+uint32_t provisioningDeadline = 0;
+String serialLine;
+bool serialLineOverflow = false;
+
+static bool provisioningWindowOpen() {
+  return (int32_t)(provisioningDeadline - millis()) > 0;
+}
+
+static void sendProvisioningResult(bool ok, const char *code) {
+  JsonDocument response;
+  response["ok"] = ok;
+  response[ok ? "saved" : "error"] = code;
+  serializeJson(response, Serial);
+  Serial.println();
+}
+
+static void sendProvisioningStatus() {
+  JsonDocument response;
+  response["ok"] = true;
+  response["configured"] = configured;
+  response["window_open"] = provisioningWindowOpen();
+  response["viewer_url"] = viewerUrl;
+  serializeJson(response, Serial);
+  Serial.println();
+}
+
+static bool validViewerUrl(const String &url) {
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
+static void handleProvisioningCommand(const String &line) {
+  JsonDocument request;
+  if (deserializeJson(request, line)) {
+    sendProvisioningResult(false, "invalid_json");
+    return;
+  }
+
+  const char *command = request["cmd"] | "";
+  if (strcmp(command, "status") == 0) {
+    sendProvisioningStatus();
+    return;
+  }
+  if (!provisioningWindowOpen()) {
+    sendProvisioningResult(false, "window_closed");
+    return;
+  }
+  if (strcmp(command, "reset") == 0) {
+    preferences.begin("bitget-view", false);
+    preferences.clear();
+    preferences.end();
+    sendProvisioningResult(true, "reset");
+    delay(100);
+    ESP.restart();
+    return;
+  }
+  if (strcmp(command, "set_wifi") != 0) {
+    sendProvisioningResult(false, "unknown_command");
+    return;
+  }
+
+  const char *ssid = request["ssid"] | "";
+  const char *password = request["password"] | "";
+  String nextViewerUrl = String(request["viewer_url"] | DEFAULT_VIEWER_URL);
+  if (strlen(ssid) == 0 || strlen(ssid) > 32 || strlen(password) > 63 ||
+      nextViewerUrl.length() > 200 || !validViewerUrl(nextViewerUrl)) {
+    sendProvisioningResult(false, "invalid_config");
+    return;
+  }
+
+  preferences.begin("bitget-view", false);
+  bool saved = preferences.putString("ssid", ssid) > 0;
+  saved = preferences.putString("pass", password) > 0 && saved;
+  saved = preferences.putString("url", nextViewerUrl) > 0 && saved;
+  preferences.end();
+  if (!saved) {
+    sendProvisioningResult(false, "save_failed");
+    return;
+  }
+
+  sendProvisioningResult(true, "restarting");
+  delay(100);
+  ESP.restart();
+}
+
+static void handleUsbProvisioning() {
+  while (Serial.available() > 0) {
+    char character = (char)Serial.read();
+    if (character == '\r') continue;
+    if (character == '\n') {
+      if (serialLineOverflow) {
+        sendProvisioningResult(false, "line_too_long");
+      } else if (serialLine.length() > 0) {
+        handleProvisioningCommand(serialLine);
+      }
+      serialLine = "";
+      serialLineOverflow = false;
+      continue;
+    }
+    if (serialLine.length() < SERIAL_LINE_MAX) {
+      serialLine += character;
+    } else {
+      serialLineOverflow = true;
+    }
+  }
+}
 
 static uint16_t pnlColor(double value) {
   if (value > 0.004) return COLOR_POSITIVE;
@@ -69,6 +170,7 @@ static void formatUsd(char *out, size_t length, double value) {
 }
 
 static void connectWifi() {
+  if (!configured) return;
   if (WiFi.status() == WL_CONNECTED) return;
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
@@ -159,7 +261,7 @@ static void drawDashboard() {
   tft.drawString("BITGET TRACKER", 8, 5, 2);
   tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
   tft.drawString("PI VIEWER", 8, 21, 1);
-  const char *status = online ? (coreFresh ? "LIVE" : "STALE") : (WiFi.status() == WL_CONNECTED ? "SYNC" : "OFFLINE");
+  const char *status = !configured ? "USB SETUP" : (online ? (coreFresh ? "LIVE" : "STALE") : (WiFi.status() == WL_CONNECTED ? "SYNC" : "OFFLINE"));
   tft.setTextColor(online ? (coreFresh ? COLOR_POSITIVE : COLOR_WARNING) : COLOR_NEGATIVE, COLOR_BACKGROUND);
   tft.drawRightString(status, 312, 10, 2);
 
@@ -187,20 +289,23 @@ static void drawDashboard() {
   tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
   tft.drawString("TOUCH TO REFRESH", 8, 216, 1);
   tft.drawRightString(String("UPDATED ") + lastUpdated, 312, 216, 1);
-  tft.drawRightString(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting", 312, 230, 1);
+  tft.drawRightString(!configured ? "USB: send setup" : (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting"), 312, 230, 1);
 }
 
 static void loadConfiguration() {
   preferences.begin("bitget-view", true);
-  wifiSsid = preferences.getString("ssid", WIFI_SSID);
-  wifiPass = preferences.getString("pass", WIFI_PASS);
-  viewerUrl = preferences.getString("url", PI_VIEWER_URL);
+  wifiSsid = preferences.getString("ssid", "");
+  wifiPass = preferences.getString("pass", "");
+  viewerUrl = preferences.getString("url", DEFAULT_VIEWER_URL);
   preferences.end();
   while (viewerUrl.endsWith("/")) viewerUrl.remove(viewerUrl.length() - 1);
+  configured = wifiSsid.length() > 0 && wifiPass.length() > 0 && validViewerUrl(viewerUrl);
 }
 
 void setup() {
   Serial.begin(115200);
+  provisioningDeadline = millis() + USB_PROVISIONING_WINDOW_MS;
+  Serial.println("{\"ready\":true,\"protocol\":\"usb-provisioning-v1\"}");
   lv_init();  // Retain compatibility with existing CYD LVGL deployments.
   tft.init();
   tft.setRotation(1);
@@ -215,9 +320,10 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-  if (WiFi.status() != WL_CONNECTED) connectWifi();
+  handleUsbProvisioning();
+  if (configured && WiFi.status() != WL_CONNECTED) connectWifi();
   bool tapped = touch.touched();
-  if (tapped || now - lastFetchAt >= FETCH_INTERVAL_MS) {
+  if (configured && (tapped || now - lastFetchAt >= FETCH_INTERVAL_MS)) {
     lastFetchAt = now;
     online = fetchDashboard();  // Failed fetch leaves all last* values intact.
     drawDashboard();
