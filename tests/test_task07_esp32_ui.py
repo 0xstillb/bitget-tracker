@@ -28,7 +28,7 @@ def test_cyd_ui_fetches_only_the_compact_esp32_home_payload_and_keeps_last_value
 def test_cyd_ui_has_simplified_status_pnl_equity_and_three_position_layout():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    for label in ("EQUITY", "TODAY P&L", "OPEN P&L", "ALL TIME", "POSITIONS", "ONLINE", "OFFLINE"):
+    for label in ("TOTAL EQUITY", "TODAY P&L", "OPEN P&L", "ALL-TIME", "OPEN POSITIONS", "LIVE", "OFFLINE"):
         assert label in source
     assert "for (int index = 0; index < 3; ++index)" in source
 
@@ -36,9 +36,9 @@ def test_cyd_ui_has_simplified_status_pnl_equity_and_three_position_layout():
 def test_cyd_ui_uses_tft_espi_compatible_right_aligned_text_calls():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    assert '"OFFLINE", 314, 5, 1)' in source
-    assert "tft.drawRightString(equity, 306, 34, 2);" in source
-    assert '"Wi-Fi reconnecting", 314, 218, 1)' in source
+    assert "tft.drawRightString(equity, 306, 52, 4);" in source
+    assert '"TOUCH TO REFRESH"' in source
+    assert '"Wi-Fi reconnecting", 312, 230, 1)' in source
 
 
 def test_cyd_templates_contain_no_real_wifi_or_service_secret():
