@@ -101,7 +101,7 @@ def login_flow_config() -> dict:
         ),
         "consent_labels": ("accept all", "accept cookies"),
         "dialog_labels": ("continue",),
-        "submit_labels": ("next", "continue", "log in", "login"),
+        "submit_labels": ("next",),
     }
 
 
@@ -295,28 +295,58 @@ def _record_auto_login_alert(alerts: AlertStateMachine | None, state: str, code:
     alerts.record_auth_failure(reason)
 
 
-async def _click_login_button(page, labels: list[str]) -> bool:
-    return await page.evaluate(
-        """expected => {
+async def _open_login_page(page) -> None:
+    """Open Bitget login and allow its client-rendered form to settle."""
+    await page.goto(f"{BITGET_BASE}/login", wait_until="domcontentloaded", timeout=60_000)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15_000)
+    except Exception as error:
+        if classify_auto_login_error(error)[1] != "login_timeout":
+            raise
+        logger.info("Auto-login network idle wait timed out; continuing after bounded settle")
+    await page.wait_for_timeout(2_000)
+
+
+async def _click_login_button(page, labels: list[str], wait_ms: int = 0) -> bool:
+    deadline = time.monotonic() + max(0, wait_ms) / 1000
+    while True:
+        try:
+            state = await page.evaluate(
+                """expected => {
             const labels = expected.map(item => item.toLowerCase());
             const button = [...document.querySelectorAll('button,[role="button"],input[type="submit"]')].find(item => {
                 const rect = item.getBoundingClientRect();
                 const text = (item.value || item.textContent || '').trim().toLowerCase();
                 return labels.some(label => text === label || text.includes(label)) &&
-                    !item.disabled && rect.width > 0 && rect.height > 0;
+                    rect.width > 0 && rect.height > 0;
             });
-            if (!button) return false;
+            if (!button) return 'missing';
+            if (button.disabled) return 'disabled';
             button.click();
-            return true;
+            return 'clicked';
         }""",
-        labels,
-    )
+                labels,
+            )
+        except Exception as error:
+            if "execution context was destroyed" not in str(error).lower():
+                raise
+            state = "navigating"
+        if state == "clicked":
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await page.wait_for_timeout(250)
+
+
+async def _type_login_value(page, locator, value: str, field_name: str) -> None:
+    await locator.click(click_count=3 if field_name == "username" else 1)
+    await locator.fill("")
+    await locator.press_sequentially(value, delay=30)
+    await page.wait_for_timeout(300)
 
 
 async def _fill_login_field(page, selectors: tuple[str, ...], value: str, field_name: str) -> None:
     """Fill the first visible field from a bounded selector fallback list."""
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-
     deadline = time.monotonic() + 15
     for selector in selectors:
         remaining_ms = int((deadline - time.monotonic()) * 1000)
@@ -326,9 +356,11 @@ async def _fill_login_field(page, selectors: tuple[str, ...], value: str, field_
         locator = page.locator(selector).first
         try:
             await locator.wait_for(state="visible", timeout=remaining_ms)
-            await locator.fill(value)
+            await _type_login_value(page, locator, value, field_name)
             return
-        except PlaywrightTimeoutError:
+        except Exception as error:
+            if classify_auto_login_error(error)[1] != "login_timeout":
+                raise
             continue
 
     # Bitget occasionally renders the same fields without stable attributes.
@@ -349,23 +381,29 @@ async def _fill_login_field(page, selectors: tuple[str, ...], value: str, field_
             })"""
         )
         score = login_input_score(metadata, field_name)
-        if score:
+        if score > 1:
             candidates.append((score, locator, metadata))
     for _score, locator, _metadata in sorted(candidates, key=lambda item: item[0], reverse=True):
-        await locator.fill(value)
+        await _type_login_value(page, locator, value, field_name)
         return
     logger.warning("Auto-login %s field not found; visible_input_count=%d", field_name, len(candidates))
     raise TimeoutError(f"login {field_name} field not found")
 
 
-async def _handle_login_interstitials(page) -> None:
-    """Dismiss consent and bounded Continue dialogs; never solve human checks."""
+async def _dismiss_cookie_consent(page) -> None:
     config = login_flow_config()
-    await _click_login_button(page, list(config["consent_labels"]))
+    if await _click_login_button(page, list(config["consent_labels"])):
+        await page.wait_for_timeout(1_000)
+
+
+async def _handle_login_interstitials(page) -> None:
+    """Dismiss bounded Continue dialogs after credentials; never solve human checks."""
+    config = login_flow_config()
     for _ in range(5):
+        await page.wait_for_timeout(2_000)
         if not await _click_login_button(page, list(config["dialog_labels"])):
             break
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(1_000)
 
 
 async def _login_page_snapshot(page) -> dict:
@@ -452,18 +490,18 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                             }})();"""
                         )
                     page = await context.new_page()
-                    await page.goto(f"{BITGET_BASE}/login", wait_until="domcontentloaded", timeout=30_000)
-                    await page.wait_for_timeout(1_500)
+                    await _open_login_page(page)
                     logger.info("Auto-login page ready: path=%s", urlsplit(page.url).path)
                     flow = login_flow_config()
-                    await _handle_login_interstitials(page)
+                    await _dismiss_cookie_consent(page)
                     await _fill_login_field(page, flow["username_selectors"], config["phone"], "username")
-                    if not await _click_login_button(page, list(flow["submit_labels"])):
+                    if not await _click_login_button(page, list(flow["submit_labels"]), wait_ms=10_000):
                         raise RuntimeError("username submit button not found")
-                    await _handle_login_interstitials(page)
+                    await page.wait_for_timeout(2_000)
                     await _fill_login_field(page, flow["password_selectors"], config["password"], "password")
-                    if not await _click_login_button(page, list(flow["submit_labels"])):
+                    if not await _click_login_button(page, list(flow["submit_labels"]), wait_ms=10_000):
                         raise RuntimeError("password submit button not found")
+                    await page.wait_for_timeout(2_000)
                     await _handle_login_interstitials(page)
 
                     deadline = time.monotonic() + config["timeout_sec"]
