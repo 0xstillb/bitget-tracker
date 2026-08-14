@@ -15,3 +15,4 @@
 // Dashboard labels use TFT_eSPI's built-in fonts 1 and 2.
 #define LOAD_GLCD
 #define LOAD_FONT2
+#define LOAD_FONT4

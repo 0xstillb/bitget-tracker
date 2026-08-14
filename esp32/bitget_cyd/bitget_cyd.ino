@@ -1,4 +1,4 @@
-/* Bitget Tracker CYD Viewer — simplified 320x240 landscape status screen. */
+/* Bitget Tracker CYD Viewer — compact dark dashboard for a 320x240 screen. */
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -22,6 +22,16 @@ static const uint16_t SCREEN_WIDTH = 320;
 static const uint16_t SCREEN_HEIGHT = 240;
 static const uint32_t FETCH_INTERVAL_MS = 30000;
 
+// A small, high-contrast palette keeps the dashboard readable on the CYD.
+static const uint16_t COLOR_BACKGROUND = 0x0841;
+static const uint16_t COLOR_PANEL = 0x10A3;
+static const uint16_t COLOR_BORDER = 0x2A85;
+static const uint16_t COLOR_ACCENT = 0x45FF;
+static const uint16_t COLOR_MUTED = 0x9D5B;
+static const uint16_t COLOR_POSITIVE = 0x55EA;
+static const uint16_t COLOR_NEGATIVE = 0xF8C6;
+static const uint16_t COLOR_WARNING = 0xF6A0;
+
 #define XPT2046_IRQ 36
 #define XPT2046_MOSI 32
 #define XPT2046_MISO 39
@@ -41,14 +51,16 @@ double lastTodayPnl = 0.0;
 double lastOpenPnl = 0.0;
 double lastAllPnl = 0.0;
 String lastPositions[3] = {"No open positions", "", ""};
+double lastPositionPnl[3] = {0.0, 0.0, 0.0};
+uint8_t lastPositionCount = 0;
 String lastUpdated = "--:--";
 bool coreFresh = false;
 bool online = false;
 uint32_t lastFetchAt = 0;
 
 static uint16_t pnlColor(double value) {
-  if (value > 0.004) return TFT_GREEN;
-  if (value < -0.004) return TFT_RED;
+  if (value > 0.004) return COLOR_POSITIVE;
+  if (value < -0.004) return COLOR_NEGATIVE;
   return TFT_WHITE;
 }
 
@@ -87,6 +99,8 @@ static bool fetchDashboard() {
   double nextAllPnl = payload["all"] | lastAllPnl;
   String nextUpdated = String((const char *)(payload["upd"] | lastUpdated.c_str()));
   String nextPositions[3] = {"No open positions", "", ""};
+  double nextPositionPnl[3] = {0.0, 0.0, 0.0};
+  uint8_t nextPositionCount = min((uint8_t)3, (uint8_t)(payload["npos"] | 0));
   JsonArray positions = payload["positions"].as<JsonArray>();
   for (int index = 0; index < 3; ++index) {
     if (index >= positions.size()) break;
@@ -94,9 +108,10 @@ static bool fetchDashboard() {
     const char *symbol = position["s"] | "?";
     const char *direction = position["d"] | "L";
     double pnl = position["u"] | 0.0;
-    char line[64];
-    snprintf(line, sizeof(line), "%s %s  %+.2f", symbol, direction, pnl);
+    char line[32];
+    snprintf(line, sizeof(line), "%s  %s", symbol, direction);
     nextPositions[index] = line;
+    nextPositionPnl[index] = pnl;
   }
 
   lastEquity = nextEquity;
@@ -104,57 +119,75 @@ static bool fetchDashboard() {
   lastOpenPnl = nextOpenPnl;
   lastAllPnl = nextAllPnl;
   lastUpdated = nextUpdated;
-  for (int index = 0; index < 3; ++index) lastPositions[index] = nextPositions[index];
+  lastPositionCount = nextPositionCount;
+  for (int index = 0; index < 3; ++index) {
+    lastPositions[index] = nextPositions[index];
+    lastPositionPnl[index] = nextPositionPnl[index];
+  }
   coreFresh = !(payload["stale"] | true);
   return true;
 }
 
-static void drawCard(int x, int y, int width, int height, const char *label, double value) {
+static void drawMetricCard(int x, int y, int width, int height, const char *label, double value) {
   char amount[24];
   formatUsd(amount, sizeof(amount), value);
-  tft.fillRoundRect(x, y, width, height, 5, TFT_DARKGREY);
-  tft.setTextColor(TFT_LIGHTGREY, TFT_DARKGREY);
+  tft.fillRoundRect(x, y, width, height, 6, COLOR_PANEL);
+  tft.drawRoundRect(x, y, width, height, 6, COLOR_BORDER);
+  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
   tft.setTextSize(1);
-  tft.drawString(label, x + 5, y + 5);
-  tft.setTextColor(pnlColor(value), TFT_DARKGREY);
-  tft.setTextSize(2);
-  tft.drawString(amount, x + 5, y + 20);
+  tft.drawString(label, x + 7, y + 5, 1);
+  tft.setTextColor(pnlColor(value), COLOR_PANEL);
+  tft.drawString(amount, x + 7, y + 22, 2);
+}
+
+static void drawPositionRow(int index, int y) {
+  tft.fillRoundRect(5, y, 310, 18, 5, COLOR_PANEL);
+  tft.drawRoundRect(5, y, 310, 18, 5, COLOR_BORDER);
+  tft.setTextColor(index < lastPositionCount ? TFT_WHITE : COLOR_MUTED, COLOR_PANEL);
+  tft.drawString(lastPositions[index], 12, y + 4, 1);
+  if (index < lastPositionCount) {
+    char amount[20];
+    formatUsd(amount, sizeof(amount), lastPositionPnl[index]);
+    tft.setTextColor(pnlColor(lastPositionPnl[index]), COLOR_PANEL);
+    tft.drawRightString(amount, 306, y + 4, 1);
+  }
 }
 
 static void drawDashboard() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("BITGET PI VIEWER", 6, 5);
-  tft.setTextColor(online ? (coreFresh ? TFT_GREEN : TFT_YELLOW) : TFT_RED, TFT_BLACK);
-  tft.drawRightString(online ? (coreFresh ? "ONLINE" : "STALE") : "OFFLINE", 314, 5, 1);
+  tft.fillScreen(COLOR_BACKGROUND);
+  tft.setTextColor(TFT_WHITE, COLOR_BACKGROUND);
+  tft.drawString("BITGET TRACKER", 8, 5, 2);
+  tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
+  tft.drawString("PI VIEWER", 8, 21, 1);
+  const char *status = online ? (coreFresh ? "LIVE" : "STALE") : (WiFi.status() == WL_CONNECTED ? "SYNC" : "OFFLINE");
+  tft.setTextColor(online ? (coreFresh ? COLOR_POSITIVE : COLOR_WARNING) : COLOR_NEGATIVE, COLOR_BACKGROUND);
+  tft.drawRightString(status, 312, 10, 2);
 
   char equity[28];
   formatUsd(equity, sizeof(equity), lastEquity);
-  tft.fillRoundRect(5, 20, 310, 38, 5, TFT_NAVY);
-  tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
-  tft.setTextSize(1);
-  tft.drawString("EQUITY", 12, 26);
-  tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.setTextSize(2);
-  tft.drawRightString(equity, 306, 34, 2);
+  tft.fillRoundRect(5, 37, 310, 42, 7, COLOR_PANEL);
+  tft.drawRoundRect(5, 37, 310, 42, 7, COLOR_BORDER);
+  tft.fillRoundRect(5, 37, 5, 42, 3, COLOR_ACCENT);
+  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+  tft.drawString("TOTAL EQUITY", 14, 43, 1);
+  tft.setTextColor(TFT_WHITE, COLOR_PANEL);
+  tft.drawRightString(equity, 306, 52, 4);
 
-  drawCard(5, 64, 100, 48, "TODAY P&L", lastTodayPnl);
-  drawCard(110, 64, 100, 48, "OPEN P&L", lastOpenPnl);
-  drawCard(215, 64, 100, 48, "ALL TIME", lastAllPnl);
+  drawMetricCard(5, 85, 100, 40, "TODAY P&L", lastTodayPnl);
+  drawMetricCard(110, 85, 100, 40, "OPEN P&L", lastOpenPnl);
+  drawMetricCard(215, 85, 100, 40, "ALL-TIME", lastAllPnl);
 
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  tft.drawString("POSITIONS (latest 3)", 6, 119);
+  tft.setTextColor(TFT_WHITE, COLOR_BACKGROUND);
+  tft.drawString("OPEN POSITIONS", 7, 132, 2);
+  tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
+  tft.drawRightString(String(lastPositionCount) + "/3", 312, 133, 1);
   for (int index = 0; index < 3; ++index) {
-    int y = 134 + index * 24;
-    tft.drawRoundRect(5, y, 310, 20, 3, TFT_DARKGREY);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString(lastPositions[index], 11, y + 6);
+    drawPositionRow(index, 146 + index * 19);
   }
-  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  tft.drawString(String("Updated: ") + lastUpdated, 6, 218);
-  tft.drawRightString(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting", 314, 218, 1);
+  tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
+  tft.drawString("TOUCH TO REFRESH", 8, 216, 1);
+  tft.drawRightString(String("UPDATED ") + lastUpdated, 312, 216, 1);
+  tft.drawRightString(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting", 312, 230, 1);
 }
 
 static void loadConfiguration() {
