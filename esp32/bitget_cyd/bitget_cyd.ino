@@ -13,6 +13,7 @@
 static const uint16_t SCREEN_WIDTH = 320;
 static const uint16_t SCREEN_HEIGHT = 240;
 static const uint32_t FETCH_INTERVAL_MS = 30000;
+static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
 static const uint32_t USB_PROVISIONING_WINDOW_MS = 120000;
 static const size_t SERIAL_LINE_MAX = 512;
 static const char *DEFAULT_VIEWER_URL = "http://192.168.1.121:8080";
@@ -53,6 +54,7 @@ bool coreFresh = false;
 bool online = false;
 bool configured = false;
 uint32_t lastFetchAt = 0;
+uint32_t lastWifiAttemptAt = 0;
 uint32_t provisioningDeadline = 0;
 String serialLine;
 bool serialLineOverflow = false;
@@ -172,6 +174,9 @@ static void formatUsd(char *out, size_t length, double value) {
 static void connectWifi() {
   if (!configured) return;
   if (WiFi.status() == WL_CONNECTED) return;
+  uint32_t now = millis();
+  if (lastWifiAttemptAt != 0 && now - lastWifiAttemptAt < WIFI_RETRY_INTERVAL_MS) return;
+  lastWifiAttemptAt = now;
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
 }
