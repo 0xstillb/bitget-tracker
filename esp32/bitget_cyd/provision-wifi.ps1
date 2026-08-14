@@ -67,6 +67,9 @@ try {
         throw "Pi Viewer URL must start with http:// or https://."
     }
 
+    Write-Host "Press the EN/RESET button on the ESP32 now, then press Enter immediately." -ForegroundColor Yellow
+    Read-Host "Press Enter after reset"
+
     $payload = [ordered]@{
         cmd = "set_wifi"
         ssid = $ssid
