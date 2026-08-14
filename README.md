@@ -57,6 +57,29 @@ may be published through Cloudflare Access. Follow the complete guides:
 The Render instructions below are retained for the original single-host setup.
 They are not the recommended deployment when using the private VPS/Pi topology.
 
+## GitHub Container Image
+
+Every merge into `integration` publishes a multi-architecture Core image to
+GitHub Container Registry (GHCR). It has `linux/amd64` for a VPS and
+`linux/arm64` for a 64-bit Raspberry Pi OS installation:
+
+```sh
+docker pull ghcr.io/0xstillb/bitget-tracker:integration
+```
+
+If the repository or package is private, authenticate on the target host with
+a GitHub classic personal access token scoped only to `read:packages`:
+
+```sh
+printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io -u 0xstillb --password-stdin
+docker pull ghcr.io/0xstillb/bitget-tracker:integration
+```
+
+The image contains no runtime configuration, cookie, or token. Configure those
+only on the target host. Do not publish the Core port through Docker, a router,
+Cloudflare Tunnel, or a public reverse proxy. A Raspberry Pi Core also runs
+Chromium, so verify RAM and thermal headroom before using this image there.
+
 ---
 
 ## Deploy your own instance
