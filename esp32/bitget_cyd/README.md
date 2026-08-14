@@ -20,7 +20,8 @@ with existing CYD deployments; this focused UI uses TFT_eSPI drawing directly.
 1. Connect the CYD by USB and run `pio run -t upload` from this directory.
 2. On Windows, double-click `provision-wifi.bat`. It shows detected COM
    ports, asks for the SSID, hides the password while typing, and sends the
-   setup command for you. You can also pass a port directly, for example
+   setup command for you. At the final prompt, press the ESP32 `EN/RESET`
+   button and then press Enter immediately. You can also pass a port directly, for example
    `provision-wifi.bat COM7`.
 3. If using a serial monitor manually, open it at 115200 baud within two
    minutes of boot and send one JSON line, replacing the local values. The
