@@ -1,9 +1,9 @@
 # ติดตั้ง read-only Viewer บน Raspberry Pi
 
-คู่มือนี้ใช้กับ Raspberry Pi 4 2GB ที่รัน **Raspberry Pi OS Bookworm 64-bit**.
-Pi รันเฉพาะ `pi_viewer.py`, เก็บ last-good cache และเรียก Private Core ผ่าน
-Tailscale. ห้ามคัดลอก Bitget cookie, API key, credentials หรือ browser state
-จาก VPS มาที่ Pi.
+คู่มือนี้ใช้กับ Raspberry Pi ที่รัน **Raspberry Pi OS Bookworm 64-bit**.
+โหมดมาตรฐานคือ Pi Viewer เรียก Private Core ผ่าน Tailscale. ถ้าต้องการให้ Pi
+เป็นเจ้าของ Core และ auto-login ด้วย app approval ให้ใช้คู่มือ
+`deploy/PI_AUTO_LOGIN.md` เพิ่มเติม.
 
 ใช้โค้ดจาก branch `origin/integration` ของ `0xstillb/bitget-tracker` เท่านั้น.
 คำสั่งที่มี `<COMMIT>`, `<VPS_TAILSCALE_IP>` หรือ `<PI_LAN_IP>` ต้องแทนค่าจริง.
@@ -89,9 +89,10 @@ PI_VIEWER_PORT=8080
 PI_VIEWER_CACHE_PATH=/var/lib/bitget-pi-viewer/viewer-cache.json
 ```
 
-Pi ต้องมีเฉพาะ `INTERNAL_API_TOKEN`; ห้ามใส่ `WRITE_TOKEN`, Bitget cookie,
-password, API secret หรือ passphrase. `0.0.0.0` ใช้เพื่อให้ ESP32 ใน trusted
-LAN เข้า Viewer ได้—ต้องไม่ทำ router port-forward มาที่ port นี้.
+Pi Viewer ต้องมีเฉพาะ `INTERNAL_API_TOKEN` ในโหมดมาตรฐาน; ห้ามใส่ `WRITE_TOKEN`,
+Bitget cookie, password, API secret หรือ passphrase ใน Viewer env. ถ้าใช้
+Pi Core auto-login ให้แยก Core env ตาม `PI_AUTO_LOGIN.md`. `0.0.0.0` ใช้เพื่อให้
+ESP32 ใน trusted LAN เข้า Viewer ได้—ต้องไม่ทำ router port-forward มาที่ port นี้.
 
 ## 5. ติดตั้งและเริ่ม systemd service
 
