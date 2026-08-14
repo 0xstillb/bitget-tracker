@@ -65,6 +65,7 @@ _AUTO_LOGIN_NEXT_ATTEMPT = 0.0
 
 _SESSION_SUCCESS_CODES = {"00000", "0", "200"}
 _SESSION_EXPIRED_MARKERS = ("expired", "login", "log in", "sign in")
+_FULL_LOGIN_AUTH_COOKIE_NAMES = frozenset({"bt_newsessionid", "bt_sessonid", "bt_uid"})
 
 
 def _bounded_int(value: object, fallback: int, minimum: int, maximum: int) -> int:
@@ -475,7 +476,7 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                 browser = await playwright.chromium.launch(headless=True, args=CHROMIUM_ARGS)
                 try:
                     context = await browser.new_context(viewport={"width": 800, "height": 600})
-                    existing_cookies = _parse_cookie_string(_load_cookie_string())
+                    existing_cookies = full_login_cookies(_load_cookie_string())
                     if existing_cookies:
                         await context.add_cookies(existing_cookies)
                     local_storage = _load_local_storage()
@@ -608,6 +609,15 @@ def _parse_cookie_string(cookie_str: str) -> list[dict]:
             continue
         cookies.append({"name": name, "value": value, "domain": ".bitget.com", "path": "/"})
     return cookies
+
+
+def full_login_cookies(cookie_str: str) -> list[dict]:
+    """Keep device identity cookies while removing auth cookies that redirect expired sessions."""
+    return [
+        cookie
+        for cookie in _parse_cookie_string(cookie_str)
+        if cookie.get("name") not in _FULL_LOGIN_AUTH_COOKIE_NAMES
+    ]
 
 
 async def start_poller(push_fn: Callable):
