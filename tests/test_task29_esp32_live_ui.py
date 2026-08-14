@@ -21,11 +21,11 @@ def test_touch_refresh_is_edge_triggered_and_debounced():
     assert "touchDown && !touchWasDown" in source
 
 
-def test_live_dashboard_reads_safe_auth_and_portfolio_data_from_the_pi_viewer():
+def test_live_dashboard_reads_safe_auth_and_position_data_from_the_pi_viewer():
     source = FIRMWARE.read_text(encoding="utf-8")
 
     assert '"/api/esp32"' in source
     assert '"/api/v1/auth"' in source
-    assert "lastPortfolioName" in source
-    assert "TRACKED PORTFOLIO" in source
+    assert "lastOpenPositionCount" in source
+    assert "OPEN POSITIONS" in source
     assert "APPROVE" in source

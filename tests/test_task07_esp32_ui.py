@@ -22,26 +22,24 @@ def test_cyd_ui_fetches_compact_pi_payloads_and_keeps_last_values():
     assert "lastTodayPnl" in source
     assert "lastOpenPnl" in source
     assert '"/api/v1/auth"' in source
-    assert "lastPositions[2]" in source
-    assert "lastPortfolioName" in source
+    assert "lastOpenPositionCount" in source
     assert "if (!payload[\"ok\"].as<bool>()) return false;" in source
 
 
 def test_cyd_ui_has_mockup_style_status_pnl_equity_and_compact_position_layout():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    for label in ("TOTAL EQUITY", "TODAY", "OPEN", "ALL-TIME", "OPEN POSITIONS", "TRACKED PORTFOLIO", "LIVE", "OFFLINE"):
+    for label in ("OPEN P&L (now)", "TODAY P&L", "TOTAL BALANCE", "ALL-TIME P&L", "OPEN POSITIONS", "LIVE", "OFFLINE"):
         assert label in source
-    assert "for (int index = 0; index < 2; ++index)" in source
+    assert "drawWidePositionValue();" in source
 
 
 def test_cyd_ui_uses_tft_espi_compatible_right_aligned_text_calls():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    assert "tft.drawString(equity, 14, 27, 4);" in source
-    assert "Tap refresh" in source
-    assert '"Updated "' in source
-    assert "tft.drawRightString(amount, 306, 200, 1);" in source
+    assert "tft.drawRightString(amount, 300, 168" in source
+    assert "ESP.getFreeHeap() / 1024" in source
+    assert "tft.drawString(footer, 26, 219, 2);" in source
 
 
 def test_cyd_templates_contain_no_real_wifi_or_service_secret():
