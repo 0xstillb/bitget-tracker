@@ -14,32 +14,34 @@ def test_cyd_firmware_keeps_the_required_hardware_stack_and_landscape_geometry()
     assert "tft.setRotation(1)" in source
 
 
-def test_cyd_ui_fetches_only_the_compact_esp32_home_payload_and_keeps_last_values():
+def test_cyd_ui_fetches_compact_pi_payloads_and_keeps_last_values():
     source = FIRMWARE.read_text(encoding="utf-8")
 
     assert '"/api/esp32"' in source
     assert "lastEquity" in source
     assert "lastTodayPnl" in source
     assert "lastOpenPnl" in source
-    assert "lastPositions[3]" in source
+    assert '"/api/v1/auth"' in source
+    assert "lastPositions[2]" in source
+    assert "lastPortfolioName" in source
     assert "if (!payload[\"ok\"].as<bool>()) return false;" in source
 
 
-def test_cyd_ui_has_simplified_status_pnl_equity_and_three_position_layout():
+def test_cyd_ui_has_mockup_style_status_pnl_equity_and_compact_position_layout():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    for label in ("TOTAL EQUITY", "TODAY P&L", "OPEN P&L", "ALL-TIME", "OPEN POSITIONS", "LIVE", "OFFLINE"):
+    for label in ("TOTAL EQUITY", "TODAY", "OPEN", "ALL-TIME", "OPEN POSITIONS", "TRACKED PORTFOLIO", "LIVE", "OFFLINE"):
         assert label in source
-    assert "for (int index = 0; index < 3; ++index)" in source
+    assert "for (int index = 0; index < 2; ++index)" in source
 
 
 def test_cyd_ui_uses_tft_espi_compatible_right_aligned_text_calls():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    assert "tft.drawRightString(equity, 306, 52, 4);" in source
-    assert '"TOUCH TO REFRESH"' in source
+    assert "tft.drawRightString(equity, 305, 39, 4);" in source
+    assert '"TAP: REFRESH"' in source
     assert '"Wi-Fi reconnecting"' in source
-    assert '"USB: send setup"' in source
+    assert '"USB: setup"' in source
 
 
 def test_cyd_templates_contain_no_real_wifi_or_service_secret():
