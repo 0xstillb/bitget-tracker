@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from alerts import AlertStateMachine, notifier_from_environment
 
@@ -83,6 +84,33 @@ def read_auto_login_config(env: dict | None = None) -> dict:
         "phone": str(env.get("BITGET_PHONE", "")),
         "password": str(env.get("BITGET_PASSWORD", "")),
     }
+
+
+def login_flow_config() -> dict:
+    """Return non-secret selectors and labels used by the Bitget login flow."""
+    return {
+        "username_selectors": (
+            'input[name="username"]',
+            'input[autocomplete="username"]',
+            'input[type="email"]',
+            'input[type="tel"]',
+        ),
+        "password_selectors": (
+            'input[type="password"]',
+            'input[autocomplete="current-password"]',
+        ),
+        "consent_labels": ("accept all", "accept cookies"),
+        "dialog_labels": ("continue",),
+        "submit_labels": ("next", "continue", "log in", "login"),
+    }
+
+
+def classify_auto_login_error(error: BaseException) -> tuple[str, str]:
+    """Map browser failures to safe status codes without exposing exception text."""
+    error_name = type(error).__name__.lower()
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or error_name == "timeouterror":
+        return "failed", "login_timeout"
+    return "failed", "worker_error"
 
 
 def classify_login_page_snapshot(snapshot: dict) -> tuple[str, str] | None:
@@ -235,6 +263,7 @@ def _record_auto_login_alert(alerts: AlertStateMachine | None, state: str, code:
         "otp_pending": "Bitget cookie is missing or expired; OTP verification requires human action.",
         "captcha_pending": "Bitget cookie is missing or expired; CAPTCHA requires human action.",
         "attempts_exhausted": "Bitget auto-login failed after the bounded retry limit.",
+        "login_timeout": "Bitget auto-login timed out before the login page was ready.",
         "worker_error": "Bitget auto-login worker failed; manual login may be required.",
         "rejected": "Bitget auto-login was rejected; check the account credentials.",
     }
@@ -245,10 +274,11 @@ def _record_auto_login_alert(alerts: AlertStateMachine | None, state: str, code:
 async def _click_login_button(page, labels: list[str]) -> bool:
     return await page.evaluate(
         """expected => {
-            const labels = new Set(expected.map(item => item.toLowerCase()));
-            const button = [...document.querySelectorAll('button')].find(item => {
+            const labels = expected.map(item => item.toLowerCase());
+            const button = [...document.querySelectorAll('button,[role="button"],input[type="submit"]')].find(item => {
                 const rect = item.getBoundingClientRect();
-                return labels.has((item.textContent || '').trim().toLowerCase()) &&
+                const text = (item.value || item.textContent || '').trim().toLowerCase();
+                return labels.some(label => text === label || text.includes(label)) &&
                     !item.disabled && rect.width > 0 && rect.height > 0;
             });
             if (!button) return false;
@@ -257,6 +287,36 @@ async def _click_login_button(page, labels: list[str]) -> bool:
         }""",
         labels,
     )
+
+
+async def _fill_login_field(page, selectors: tuple[str, ...], value: str, field_name: str) -> None:
+    """Fill the first visible field from a bounded selector fallback list."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    deadline = time.monotonic() + 15
+    for selector in selectors:
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            break
+        remaining_ms = min(3_000, max(500, remaining_ms))
+        locator = page.locator(selector).first
+        try:
+            await locator.wait_for(state="visible", timeout=remaining_ms)
+            await locator.fill(value)
+            return
+        except PlaywrightTimeoutError:
+            continue
+    raise TimeoutError(f"login {field_name} field not found")
+
+
+async def _handle_login_interstitials(page) -> None:
+    """Dismiss consent and bounded Continue dialogs; never solve human checks."""
+    config = login_flow_config()
+    await _click_login_button(page, list(config["consent_labels"]))
+    for _ in range(5):
+        if not await _click_login_button(page, list(config["dialog_labels"])):
+            break
+        await page.wait_for_timeout(500)
 
 
 async def _login_page_snapshot(page) -> dict:
@@ -328,16 +388,34 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                 browser = await playwright.chromium.launch(headless=True, args=CHROMIUM_ARGS)
                 try:
                     context = await browser.new_context(viewport={"width": 800, "height": 600})
+                    existing_cookies = _parse_cookie_string(_load_cookie_string())
+                    if existing_cookies:
+                        await context.add_cookies(existing_cookies)
+                    local_storage = _load_local_storage()
+                    if local_storage:
+                        storage_json = json.dumps(local_storage, ensure_ascii=False)
+                        await context.add_init_script(
+                            f"""(() => {{
+                                const storage = {storage_json};
+                                for (const [key, value] of Object.entries(storage)) {{
+                                    window.localStorage.setItem(key, String(value));
+                                }}
+                            }})();"""
+                        )
                     page = await context.new_page()
                     await page.goto(f"{BITGET_BASE}/login", wait_until="domcontentloaded", timeout=30_000)
-                    username = page.locator('input[name="username"], input[type="email"], input[type="tel"]').first
-                    await username.fill(config["phone"], timeout=15_000)
-                    if not await _click_login_button(page, ["next", "continue"]):
+                    await page.wait_for_timeout(1_500)
+                    logger.info("Auto-login page ready: path=%s", urlsplit(page.url).path)
+                    flow = login_flow_config()
+                    await _handle_login_interstitials(page)
+                    await _fill_login_field(page, flow["username_selectors"], config["phone"], "username")
+                    if not await _click_login_button(page, list(flow["submit_labels"])):
                         raise RuntimeError("username submit button not found")
-                    password = page.locator('input[type="password"]').first
-                    await password.fill(config["password"], timeout=15_000)
-                    if not await _click_login_button(page, ["next", "log in", "login", "continue"]):
+                    await _handle_login_interstitials(page)
+                    await _fill_login_field(page, flow["password_selectors"], config["password"], "password")
+                    if not await _click_login_button(page, list(flow["submit_labels"])):
                         raise RuntimeError("password submit button not found")
+                    await _handle_login_interstitials(page)
 
                     deadline = time.monotonic() + config["timeout_sec"]
                     last_state = None
@@ -369,9 +447,10 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                 finally:
                     await browser.close()
         except Exception as error:
-            _set_login_status("failed", "worker_error")
-            _record_auto_login_alert(alerts, "failed", "worker_error")
-            logger.warning("Auto login failed: %s", type(error).__name__)
+            state, code = classify_auto_login_error(error)
+            _set_login_status(state, code)
+            _record_auto_login_alert(alerts, state, code)
+            logger.warning("Auto login failed: %s", code)
             _AUTO_LOGIN_NEXT_ATTEMPT = time.monotonic() + 300
             return False
 
