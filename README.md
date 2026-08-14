@@ -59,9 +59,8 @@ They are not the recommended deployment when using the private VPS/Pi topology.
 
 ## GitHub Container Image
 
-Every merge into `integration` publishes a multi-architecture Core image to
-GitHub Container Registry (GHCR). It has `linux/amd64` for a VPS and
-`linux/arm64` for a 64-bit Raspberry Pi OS installation:
+Every merge into `integration` publishes a `linux/arm64` image for a 64-bit
+Raspberry Pi OS installation to GitHub Container Registry (GHCR):
 
 ```sh
 docker pull ghcr.io/0xstillb/bitget-tracker:integration
