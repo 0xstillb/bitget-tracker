@@ -36,7 +36,8 @@ def test_every_viewer_response_has_no_store_and_browser_security_headers():
             assert headers["Cache-Control"] == "no-store, max-age=0"
             assert headers["Content-Security-Policy"] == (
                 "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-                "form-action 'none'; object-src 'none'"
+                "form-action 'none'; object-src 'none'; script-src 'self'; "
+                "style-src 'self'; connect-src 'self'"
             )
             assert headers["X-Content-Type-Options"] == "nosniff"
             assert headers["Referrer-Policy"] == "no-referrer"

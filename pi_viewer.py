@@ -20,6 +20,46 @@ _SECRET_MARKERS = (
 )
 
 
+DASHBOARD_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#08111f"><title>Bitget Pi Viewer</title>
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/assets/app-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/pi-viewer.css"></head><body>
+<header class="topbar"><div><p class="eyebrow">READ-ONLY · PI VIEWER</p><h1>Bitget Tracker</h1></div>
+<div class="top-actions"><span id="connection" class="badge" role="status">LOADING</span><button id="install" class="ghost" hidden>Install</button><button id="refresh" class="primary">Refresh</button></div></header>
+<main><section class="hero"><p class="label">TOTAL EQUITY</p><strong id="equity">—</strong><p id="updated">Waiting for snapshot</p></section>
+<section class="metrics" aria-label="Portfolio metrics"><article class="metric"><p>Today P&amp;L</p><strong id="today">—</strong></article><article class="metric"><p>Open P&amp;L</p><strong id="open">—</strong></article><article class="metric"><p>All-time P&amp;L</p><strong id="alltime">—</strong></article><article class="metric"><p>Open positions</p><strong id="position-count">—</strong></article></section>
+<section class="panel"><div class="panel-heading"><h2>Open positions</h2><span id="position-status"></span></div><div id="positions" class="rows"><p class="empty">No data yet</p></div></section>
+<section class="panel"><div class="panel-heading"><h2>Tracked portfolios</h2><span id="trader-count"></span></div><div id="traders" class="rows"><p class="empty">No data yet</p></div></section></main>
+<footer>Local read-only cache · <span id="refresh-note">refreshes every 30 seconds</span></footer><script src="/assets/pi-viewer.js"></script></body></html>"""
+
+DASHBOARD_CSS = """:root{color-scheme:dark;--bg:#08111f;--panel:#111d30;--line:#243552;--text:#f4f7fb;--muted:#9db0cd;--green:#53e0a1;--red:#ff7787;--amber:#ffc658}*{box-sizing:border-box}body{margin:0;min-width:300px;background:radial-gradient(circle at 80% -10%,#1b3d66,transparent 38%),var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.topbar,main,footer{width:min(920px,calc(100% - 32px));margin:auto}.topbar{min-height:88px;display:flex;align-items:center;justify-content:space-between;gap:16px}.eyebrow,.label{margin:0;color:var(--muted);font-size:11px;letter-spacing:.12em;font-weight:700}.topbar h1{margin:2px 0 0;font-size:22px}.top-actions{display:flex;align-items:center;gap:8px}.badge{border:1px solid var(--line);border-radius:999px;padding:6px 9px;color:var(--amber);font-size:11px;font-weight:700}.badge.ok{color:var(--green)}.badge.stale{color:var(--amber)}.badge.offline{color:var(--red)}button{min-height:38px;border-radius:9px;padding:0 13px;border:1px solid transparent;color:var(--text);font:inherit;font-weight:650;cursor:pointer}.primary{background:#2b73da}.ghost{background:transparent;border-color:var(--line)}main{display:grid;gap:14px}.hero,.metric,.panel{border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 92%,transparent);box-shadow:0 10px 28px #0003}.hero{border-radius:16px;padding:22px}.hero strong{display:block;margin:5px 0 1px;font-size:clamp(32px,8vw,52px);letter-spacing:-.045em}.hero p:last-child{margin:0;color:var(--muted)}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{min-height:102px;border-radius:13px;padding:14px}.metric p{margin:0;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:9px;font-size:20px}.positive{color:var(--green)}.negative{color:var(--red)}.panel{border-radius:14px;overflow:hidden}.panel-heading{display:flex;justify-content:space-between;align-items:center;padding:15px 16px;border-bottom:1px solid var(--line)}.panel h2{margin:0;font-size:15px}.panel-heading span{color:var(--muted);font-size:12px}.rows{display:grid}.row{display:grid;grid-template-columns:1fr auto;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line)}.row:last-child{border:0}.row strong{display:block;font-size:14px}.row small{color:var(--muted)}.row .value{text-align:right}.empty{margin:0;padding:18px 16px;color:var(--muted)}footer{padding:22px 0 calc(22px + env(safe-area-inset-bottom));color:var(--muted);font-size:12px}@media(max-width:620px){.topbar{padding-top:max(12px,env(safe-area-inset-top));min-height:78px}.topbar h1{font-size:19px}.top-actions{gap:6px}.top-actions .ghost{display:none}.badge{padding:5px 7px}.primary{padding:0 10px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{min-height:88px}.metric strong{font-size:18px}.hero{padding:18px}.row{padding:12px}.topbar,main,footer{width:min(100% - 20px,920px)}}"""
+
+DASHBOARD_JS = """const money=new Intl.NumberFormat(undefined,{style:"currency",currency:"USD",maximumFractionDigits:2});
+const number=new Intl.NumberFormat(undefined,{maximumFractionDigits:0});
+const byId=id=>document.getElementById(id);
+const value=(item,key,fallback=0)=>Number(item&&item[key]??fallback)||0;
+const setText=(id,text)=>{byId(id).textContent=text};
+const signed=value=>`${value>0?"+":""}${money.format(value)}`;
+function setPnl(id,amount){const node=byId(id);node.textContent=signed(amount);node.classList.toggle("positive",amount>0);node.classList.toggle("negative",amount<0)}
+function row(title,subtitle,amount){const node=document.createElement("div");node.className="row";const left=document.createElement("div");const heading=document.createElement("strong");heading.textContent=title;const detail=document.createElement("small");detail.textContent=subtitle;left.append(heading,detail);const right=document.createElement("strong");right.className="value";right.textContent=signed(amount);right.classList.toggle("positive",amount>0);right.classList.toggle("negative",amount<0);node.append(left,right);return node}
+function renderRows(id,items,makeRow){const container=byId(id);container.replaceChildren();if(!items.length){const empty=document.createElement("p");empty.className="empty";empty.textContent="No active data";container.append(empty);return}items.slice(0,8).forEach(item=>container.append(makeRow(item)))}
+function render(snapshot){const data=snapshot.data||{};const summary=data.summary||{};setText("equity",money.format(value(summary,"total_balance")+value(data.earn,"total")+value(data.elite,"bal")));setPnl("today",value(summary,"daily_pnl"));setPnl("open",value(summary,"open_positions_pnl"));setPnl("alltime",value(summary,"all_time_pnl"));setText("position-count",number.format(value(summary,"open_positions")));setText("updated",`Updated ${summary.pushed_at||snapshot.updated_at||"—"}`);const positions=Array.isArray(data.positions)?data.positions:[];const traders=Array.isArray(data.traders)?data.traders.filter(item=>item&&item.has_data!==false):[];setText("position-status",`${positions.length} active`);setText("trader-count",`${traders.length} tracked`);renderRows("positions",positions,item=>row(`${item.s||"Unknown"} · ${item.d||"—"}`,item.src||"Position",value(item,"u")));renderRows("traders",traders,item=>row(item.name||"Portfolio",`${number.format(value(item,"open_position_count"))} open`,value(item,"daily_pnl")))}
+function setConnection(state,label){const node=byId("connection");node.className=`badge ${state}`;node.textContent=label}
+async function refresh(){setConnection("stale","REFRESHING");try{const response=await fetch("/api/v1/summary",{cache:"no-store",headers:{Accept:"application/json"}});if(!response.ok)throw new Error("snapshot unavailable");render(await response.json());setConnection("ok","LIVE")}catch(_error){setConnection("offline","OFFLINE");setText("updated","Viewer is waiting for a cached snapshot")}}
+let deferredInstall;window.addEventListener("beforeinstallprompt",event=>{event.preventDefault();deferredInstall=event;byId("install").hidden=false});byId("install").addEventListener("click",async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=undefined;byId("install").hidden=true});byId("refresh").addEventListener("click",refresh);if("serviceWorker" in navigator)navigator.serviceWorker.register("/service-worker.js").catch(()=>{});refresh();window.setInterval(refresh,30000);"""
+
+PWA_MANIFEST = json.dumps({
+    "name": "Bitget Pi Viewer", "short_name": "Bitget", "start_url": "/", "scope": "/",
+    "display": "standalone", "background_color": "#08111f", "theme_color": "#08111f",
+    "icons": [{"src": "/assets/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
+}, separators=(",", ":"))
+
+SERVICE_WORKER = """const CACHE="bitget-pi-viewer-v1";const ASSETS=["/","/assets/pi-viewer.css","/assets/pi-viewer.js","/assets/app-icon.svg","/manifest.webmanifest"];self.addEventListener("install",event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));self.addEventListener("activate",event=>event.waitUntil(self.clients.claim()));self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(url.origin!==self.location.origin||!ASSETS.includes(url.pathname))return;event.respondWith(caches.match(event.request).then(cached=>cached||fetch(event.request)));});"""
+
+APP_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#08111f"/><path d="M112 156h288v78H112zm0 122h180v78H112z" fill="#2b73da"/><path d="M326 278h74v78h-74z" fill="#53e0a1"/></svg>"""
+
+
 class _NoRedirectHandler(HTTPRedirectHandler):
     """Never forward the internal token to a redirected destination."""
 
@@ -247,7 +287,8 @@ class ViewerApplication:
         "Cache-Control": "no-store, max-age=0",
         "Content-Security-Policy": (
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-            "form-action 'none'; object-src 'none'"
+            "form-action 'none'; object-src 'none'; script-src 'self'; "
+            "style-src 'self'; connect-src 'self'"
         ),
         "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
         "Referrer-Policy": "no-referrer",
@@ -268,10 +309,17 @@ class ViewerApplication:
         parsed = urlsplit(path)
         route = parsed.path
         if route == "/":
-            return 200, {"Content-Type": "text/html; charset=utf-8"}, (
-                "<!doctype html><title>Bitget Pi Viewer</title><h1>Bitget Pi Viewer</h1>"
-                "<p>Read-only cached snapshot service.</p>"
-            )
+            return 200, {"Content-Type": "text/html; charset=utf-8"}, DASHBOARD_HTML
+        if route == "/assets/pi-viewer.css":
+            return 200, {"Content-Type": "text/css; charset=utf-8"}, DASHBOARD_CSS
+        if route == "/assets/pi-viewer.js":
+            return 200, {"Content-Type": "application/javascript; charset=utf-8"}, DASHBOARD_JS
+        if route == "/assets/app-icon.svg":
+            return 200, {"Content-Type": "image/svg+xml"}, APP_ICON_SVG
+        if route == "/manifest.webmanifest":
+            return 200, {"Content-Type": "application/manifest+json; charset=utf-8"}, PWA_MANIFEST
+        if route == "/service-worker.js":
+            return 200, {"Content-Type": "application/javascript; charset=utf-8"}, SERVICE_WORKER
         if route == "/api/v1/summary":
             snapshot = self.viewer.summary()
             if snapshot is None:
