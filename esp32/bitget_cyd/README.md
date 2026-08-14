@@ -7,21 +7,36 @@ On fetch failures it shows the last successfully received values rather than
 zeroing the display.
 
 The device calls only the Pi LAN Viewer `GET /api/esp32`; it never contacts
-Bitget or the VPS Core. Copy `secrets.example.h` to `secrets.h`, use a Pi LAN
-URL, and configure TFT_eSPI with the supplied `User_Setup.h`.
+Bitget or the VPS Core. Wi-Fi credentials are entered over the physical USB
+serial connection and stored in ESP32 NVS. They are not compiled into the
+firmware. Never commit Wi-Fi credentials to the repository.
 
 Arduino libraries: ESP32 board package, ArduinoJson 7, TFT_eSPI,
 XPT2046_Touchscreen, and LVGL 8.3.x. `lv_init()` is retained for compatibility
 with existing CYD deployments; this focused UI uses TFT_eSPI drawing directly.
 
-## Flash for the home Pi
+## Flash and USB provisioning for the home Pi
 
-1. Copy `secrets.example.h` to `secrets.h`.
-2. Set the home Wi-Fi SSID/password and `PI_VIEWER_URL` to
-   `http://192.168.1.121:8080` (or the Pi's current LAN address).
-3. Connect the CYD by USB and run `pio run -t upload` from this directory.
-4. Open the serial monitor at 115200 baud. The screen should show `LIVE` and
-   the latest cached values after the first refresh.
+1. Connect the CYD by USB and run `pio run -t upload` from this directory.
+2. On Windows, double-click `provision-wifi.bat`. It shows detected COM
+   ports, asks for the SSID, hides the password while typing, and sends the
+   setup command for you. You can also pass a port directly, for example
+   `provision-wifi.bat COM7`.
+3. If using a serial monitor manually, open it at 115200 baud within two
+   minutes of boot and send one JSON line, replacing the local values. The
+   password is accepted but never printed back:
+
+   ```json
+   {"cmd":"set_wifi","ssid":"Home WiFi","password":"your-password","viewer_url":"http://192.168.1.121:8080"}
+   ```
+
+4. The device stores the values in NVS and restarts. It should show `LIVE`
+   after the first successful refresh.
+
+The serial protocol also supports `{"cmd":"status"}` (safe, no password
+returned) and `{"cmd":"reset"}` during the two-minute USB window. Reset
+clears the stored Wi-Fi and returns the device to `USB SETUP` mode. Keep the
+USB session local; do not paste credentials into source files or commit them.
 
 The firmware only calls the Pi's read-only `GET /api/esp32` endpoint. It never
 contains Bitget credentials and never contacts the VPS Core directly.

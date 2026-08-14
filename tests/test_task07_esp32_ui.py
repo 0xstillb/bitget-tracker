@@ -38,7 +38,8 @@ def test_cyd_ui_uses_tft_espi_compatible_right_aligned_text_calls():
 
     assert "tft.drawRightString(equity, 306, 52, 4);" in source
     assert '"TOUCH TO REFRESH"' in source
-    assert '"Wi-Fi reconnecting", 312, 230, 1)' in source
+    assert '"Wi-Fi reconnecting"' in source
+    assert '"USB: send setup"' in source
 
 
 def test_cyd_templates_contain_no_real_wifi_or_service_secret():
