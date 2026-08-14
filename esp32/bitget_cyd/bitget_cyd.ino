@@ -306,9 +306,9 @@ static void drawWideMetricCard(int x, int y, const char *label) {
 static void drawDashboardChrome() {
   tft.fillScreen(COLOR_BACKGROUND);
   // Two-by-three metric grid follows the approved on-device reference.
-  drawMetricCard(5, 5, "OPEN P&L (now)");
+  drawMetricCard(5, 5, "TOTAL BALANCE");
   drawMetricCard(163, 5, "TODAY P&L");
-  drawMetricCard(5, 74, "TOTAL BALANCE");
+  drawMetricCard(5, 74, "OPEN P&L (now)");
   drawMetricCard(163, 74, "ALL-TIME P&L");
   drawWideMetricCard(5, 143, "OPEN POSITIONS");
   screenChromeDrawn = true;
@@ -355,9 +355,9 @@ static void drawFooter() {
 
 static void renderDashboard() {
   if (!screenChromeDrawn) drawDashboardChrome();
-  drawMetricValue(5, 5, lastOpenPnl, false, String(lastOpenPositionCount) + " open trades");
+  drawMetricValue(5, 5, lastEquity, true, "");
   drawMetricValue(163, 5, lastTodayPnl, false, "");
-  drawMetricValue(5, 74, lastEquity, true, "");
+  drawMetricValue(5, 74, lastOpenPnl, false, String(lastOpenPositionCount) + " open trades");
   drawMetricValue(163, 74, lastAllPnl, false, "");
   drawWidePositionValue();
   drawFooter();

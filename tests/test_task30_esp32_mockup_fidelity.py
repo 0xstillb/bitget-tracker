@@ -8,9 +8,9 @@ def test_dashboard_matches_the_two_by_three_card_reference_layout():
     source = FIRMWARE.read_text(encoding="utf-8")
 
     for required in (
-        'drawMetricCard(5, 5, "OPEN P&L (now)")',
+        'drawMetricCard(5, 5, "TOTAL BALANCE")',
         'drawMetricCard(163, 5, "TODAY P&L")',
-        'drawMetricCard(5, 74, "TOTAL BALANCE")',
+        'drawMetricCard(5, 74, "OPEN P&L (now)")',
         'drawMetricCard(163, 74, "ALL-TIME P&L")',
         'drawWideMetricCard(5, 143, "OPEN POSITIONS")',
         "tft.fillRoundRect(x, y, 152, 64, 10, COLOR_PANEL)",
