@@ -18,9 +18,13 @@ with existing CYD deployments; this focused UI uses TFT_eSPI drawing directly.
 ## Flash and USB provisioning for the home Pi
 
 1. Connect the CYD by USB and run `pio run -t upload` from this directory.
-2. Open a serial monitor at 115200 baud within two minutes of boot.
-3. Send one JSON line, replacing the local values. The password is accepted
-   but never printed back:
+2. On Windows, double-click `provision-wifi.bat`. It shows detected COM
+   ports, asks for the SSID, hides the password while typing, and sends the
+   setup command for you. You can also pass a port directly, for example
+   `provision-wifi.bat COM7`.
+3. If using a serial monitor manually, open it at 115200 baud within two
+   minutes of boot and send one JSON line, replacing the local values. The
+   password is accepted but never printed back:
 
    ```json
    {"cmd":"set_wifi","ssid":"Home WiFi","password":"your-password","viewer_url":"http://192.168.1.121:8080"}
