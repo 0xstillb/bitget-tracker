@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 
-def test_ghcr_workflow_publishes_a_pinned_multi_arch_image_from_integration_only():
+def test_ghcr_workflow_publishes_a_pinned_arm64_pi_image_from_integration_only():
     workflow = Path(".github/workflows/publish-image.yml").read_text(encoding="utf-8")
 
     for required in (
@@ -12,13 +12,14 @@ def test_ghcr_workflow_publishes_a_pinned_multi_arch_image_from_integration_only
         "packages: write",
         "registry: ghcr.io",
         "images: ghcr.io/${{ github.repository }}",
-        "platforms: linux/amd64,linux/arm64",
+        "platforms: linux/arm64",
         "push: true",
         "secrets.GITHUB_TOKEN",
     ):
         assert required in workflow
 
     assert "pull_request" not in workflow
+    assert "linux/amd64" not in workflow
     assert set(re.findall(r"uses:\s*([^\s#]+)", workflow))
     for action in re.findall(r"uses:\s*([^\s#]+)", workflow):
         assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action), action
