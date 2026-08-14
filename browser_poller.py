@@ -105,6 +105,30 @@ def login_flow_config() -> dict:
     }
 
 
+def login_input_score(metadata: dict, field_name: str) -> int:
+    """Score a visible input candidate without reading or logging its value."""
+    input_type = str(metadata.get("type") or "text").strip().lower()
+    if input_type in {"hidden", "search", "button", "submit", "checkbox", "radio", "file"}:
+        return 0
+
+    haystack = " ".join(
+        str(metadata.get(key) or "").strip().lower()
+        for key in ("name", "autocomplete", "inputmode", "aria_label")
+    )
+    if field_name == "password":
+        if input_type == "password":
+            return 100
+        return 80 if "password" in haystack else 0
+
+    if input_type == "password" or "password" in haystack:
+        return 0
+    if input_type in {"email", "tel"}:
+        return 90
+    if any(token in haystack for token in ("username", "account", "email", "phone", "mobile", "login", "user")):
+        return 80
+    return 1 if input_type in {"text", ""} else 0
+
+
 def classify_auto_login_error(error: BaseException) -> tuple[str, str]:
     """Map browser failures to safe status codes without exposing exception text."""
     error_name = type(error).__name__.lower()
@@ -306,6 +330,31 @@ async def _fill_login_field(page, selectors: tuple[str, ...], value: str, field_
             return
         except PlaywrightTimeoutError:
             continue
+
+    # Bitget occasionally renders the same fields without stable attributes.
+    # Use only visible inputs and metadata; never inspect or log input values.
+    candidates = []
+    inputs = page.locator("input")
+    for index in range(min(await inputs.count(), 30)):
+        locator = inputs.nth(index)
+        if not await locator.is_visible():
+            continue
+        metadata = await locator.evaluate(
+            """element => ({
+                type: element.getAttribute('type') || 'text',
+                name: element.getAttribute('name') || '',
+                autocomplete: element.getAttribute('autocomplete') || '',
+                inputmode: element.getAttribute('inputmode') || '',
+                aria_label: element.getAttribute('aria-label') || '',
+            })"""
+        )
+        score = login_input_score(metadata, field_name)
+        if score:
+            candidates.append((score, locator, metadata))
+    for _score, locator, _metadata in sorted(candidates, key=lambda item: item[0], reverse=True):
+        await locator.fill(value)
+        return
+    logger.warning("Auto-login %s field not found; visible_input_count=%d", field_name, len(candidates))
     raise TimeoutError(f"login {field_name} field not found")
 
 
