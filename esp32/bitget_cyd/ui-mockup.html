@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bitget CYD UI mockup</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: #0e1d31;
+      --panel-2: #132640;
+      --line: #23405e;
+      --text: #f4f8ff;
+      --muted: #8fa8c5;
+      --cyan: #6ddcff;
+      --green: #5ce0a1;
+      --amber: #ffc96b;
+      --red: #ff7f91;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: radial-gradient(circle at 50% 0%, #193453 0, var(--bg) 50%);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    .stage { width: min(760px, 100%); }
+    .device {
+      width: min(640px, 100%);
+      aspect-ratio: 4 / 3;
+      margin: 0 auto;
+      padding: 2.5%;
+      border: 1px solid #355275;
+      border-radius: 24px;
+      background: #020914;
+      box-shadow: 0 24px 70px #0009, inset 0 0 0 7px #091525;
+    }
+    .screen {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      padding: 4.4% 4.5%;
+      border-radius: 12px;
+      background: linear-gradient(145deg, #0c1b2e, #071321 72%);
+      font-size: clamp(8px, 2.05vw, 16px);
+    }
+    .topbar, .hero-head, .row, .footer { display: flex; align-items: center; }
+    .topbar { justify-content: space-between; height: 11%; }
+    .brand { display: flex; align-items: center; gap: .55em; }
+    .mark {
+      display: grid; place-items: center; width: 1.9em; height: 1.9em;
+      border-radius: .55em; color: #061322; font-weight: 900;
+      background: linear-gradient(135deg, var(--cyan), #8c9dff);
+    }
+    .eyebrow { color: var(--muted); font-size: .62em; letter-spacing: .13em; text-transform: uppercase; }
+    .title { margin-top: .1em; font-size: 1.05em; font-weight: 800; letter-spacing: -.02em; }
+    .top-actions { display: flex; align-items: center; gap: .65em; }
+    .wifi { color: var(--cyan); font-size: .82em; }
+    .badge { padding: .42em .72em; border-radius: 99px; font-size: .62em; font-weight: 800; letter-spacing: .08em; }
+    .badge.live { color: #061d15; background: var(--green); }
+    .badge.stale { color: #2a1b05; background: var(--amber); }
+    .badge.offline { color: #2a0710; background: var(--red); }
+    .hero {
+      height: 30%; margin-top: 2%; padding: 5% 5.5%;
+      border: 1px solid var(--line); border-radius: 1em;
+      background: linear-gradient(135deg, #122a45, #102037);
+      position: relative; overflow: hidden;
+    }
+    .hero::after {
+      content: ""; position: absolute; width: 45%; height: 180%; right: -7%; top: -50%;
+      background: radial-gradient(circle, #62dcff1c 0 18%, transparent 19% 100%);
+      transform: rotate(24deg);
+    }
+    .hero-head { justify-content: space-between; position: relative; z-index: 1; }
+    .hero-label { color: var(--muted); font-size: .62em; letter-spacing: .14em; font-weight: 700; }
+    .updated { color: var(--muted); font-size: .58em; }
+    .hero-bottom { display: flex; align-items: end; justify-content: space-between; margin-top: 2%; position: relative; z-index: 1; }
+    .equity { font-size: 1.8em; font-weight: 850; letter-spacing: -.06em; }
+    .today { color: var(--green); font-size: .72em; font-weight: 750; }
+    .metrics { height: 23%; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2%; margin-top: 3%; }
+    .metric { min-width: 0; padding: 8% 9%; border: 1px solid var(--line); border-radius: .8em; background: var(--panel); }
+    .metric-label { overflow: hidden; color: var(--muted); font-size: .54em; white-space: nowrap; text-overflow: ellipsis; }
+    .metric-value { margin-top: 12%; font-size: .9em; font-weight: 800; letter-spacing: -.04em; }
+    .positive { color: var(--green); }
+    .neutral { color: var(--text); }
+    .positions { height: 25%; margin-top: 3%; padding: 3% 4%; border: 1px solid var(--line); border-radius: .8em; background: #0b192c; }
+    .section-title { font-size: .65em; font-weight: 800; }
+    .section-count { color: var(--muted); font-size: .58em; }
+    .position-row { display: flex; justify-content: space-between; margin-top: 3%; padding-top: 3%; border-top: 1px solid #1d3651; font-size: .63em; }
+    .symbol { font-weight: 750; }
+    .direction { margin-left: .45em; padding: .2em .45em; border-radius: .3em; color: #071c13; background: var(--green); font-size: .8em; font-weight: 800; }
+    .empty { color: var(--muted); }
+    .footer { justify-content: space-between; height: 7%; color: var(--muted); font-size: .55em; }
+    .controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 20px 0 0; }
+    button { cursor: pointer; border: 1px solid #315477; border-radius: 99px; padding: 9px 14px; color: var(--text); background: #10243b; font: inherit; }
+    button:hover, button.active { border-color: var(--cyan); background: #173552; }
+    .note { margin: 14px 0 0; color: var(--muted); text-align: center; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="device" aria-label="ESP32 CYD 320 by 240 mockup">
+      <div class="screen" id="screen">
+        <header class="topbar">
+          <div class="brand"><div class="mark">B</div><div><div class="eyebrow">Pi viewer</div><div class="title">Bitget Tracker</div></div></div>
+          <div class="top-actions"><span class="wifi" aria-label="Wi-Fi connected">⌁ Wi-Fi</span><span class="badge live" id="status">LIVE</span></div>
+        </header>
+        <section class="hero">
+          <div class="hero-head"><span class="hero-label">TOTAL EQUITY</span><span class="updated">updated 16:59</span></div>
+          <div class="hero-bottom"><span class="equity">$652.48</span><span class="today" id="today">+$6.65 today</span></div>
+        </section>
+        <section class="metrics">
+          <div class="metric"><div class="metric-label">TODAY P&amp;L</div><div class="metric-value positive">+$6.65</div></div>
+          <div class="metric"><div class="metric-label">OPEN P&amp;L</div><div class="metric-value neutral">$0.00</div></div>
+          <div class="metric"><div class="metric-label">ALL-TIME</div><div class="metric-value positive">+$25.25</div></div>
+          <div class="metric"><div class="metric-label">POSITIONS</div><div class="metric-value neutral" id="positionCount">0</div></div>
+        </section>
+        <section class="positions">
+          <div class="row"><span class="section-title">OPEN POSITIONS</span><span class="section-count" id="positionHint">No active trades</span></div>
+          <div class="position-row" id="positionRow"><span class="empty">Waiting for a new position</span><span>—</span></div>
+        </section>
+        <footer class="footer"><span>Pi LAN · read-only</span><span>touch to refresh ↻</span></footer>
+      </div>
+    </section>
+    <div class="controls" aria-label="Preview states">
+      <button class="active" data-state="live">LIVE</button>
+      <button data-state="stale">STALE</button>
+      <button data-state="offline">OFFLINE</button>
+      <button data-state="position">POSITION SAMPLE</button>
+    </div>
+    <p class="note">Interactive mockup · 2× preview of the target 320×240 ESP32 screen</p>
+  </main>
+  <script>
+    const status = document.querySelector('#status');
+    const today = document.querySelector('#today');
+    const positionCount = document.querySelector('#positionCount');
+    const positionHint = document.querySelector('#positionHint');
+    const positionRow = document.querySelector('#positionRow');
+
+    document.querySelectorAll('[data-state]').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('[data-state]').forEach((item) => item.classList.remove('active'));
+        button.classList.add('active');
+        const state = button.dataset.state;
+        if (state === 'position') {
+          status.className = 'badge live'; status.textContent = 'LIVE';
+          positionCount.textContent = '1'; positionHint.textContent = '1 active trade';
+          positionRow.innerHTML = '<span><span class="symbol">XAUUSD</span><span class="direction">LONG</span></span><span class="positive">+$1.90</span>';
+          return;
+        }
+        status.className = `badge ${state}`; status.textContent = state.toUpperCase();
+        today.textContent = state === 'offline' ? 'last sync +$6.65' : '+$6.65 today';
+        positionCount.textContent = '0'; positionHint.textContent = state === 'offline' ? 'last cached data' : 'No active trades';
+        positionRow.innerHTML = `<span class="empty">${state === 'offline' ? 'Viewer unavailable · cache kept' : 'Waiting for a new position'}</span><span>—</span>`;
+      });
+    });
+  </script>
+</body>
+</html>
