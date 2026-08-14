@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Bitget Session Copier (Local Only)",
+  "version": "1.0.0",
+  "description": "Copies the current Bitget browser session to the clipboard without storing or sending it.",
+  "permissions": [
+    "cookies",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://*.bitget.com/*"
+  ],
+  "action": {
+    "default_title": "Copy Bitget session",
+    "default_popup": "popup.html"
+  }
+}

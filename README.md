@@ -167,6 +167,12 @@ The tracker needs your Bitget browser session to call its internal APIs. You pro
 2. Click any request to `bitget.com` → **Headers** → **Request Headers**
 3. Find the `cookie:` line → right-click the value → **Copy value**
 
+**Option C — local Chrome extension:**
+The unpacked [Bitget Session Copier](chrome-extension/README.md) copies the
+active Bitget cookie header, including `bt_newsessionid`, to your clipboard
+only after you click it. It is limited to Bitget, does not open a port, and
+does not send or store the cookie.
+
 Then:
 4. Open your dashboard → scroll to **Polling Setup**
 5. Paste the cookie string → **Save**
