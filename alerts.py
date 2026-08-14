@@ -97,11 +97,31 @@ class AlertStateMachine:
         if not self._state["consecutive_failures"] and not was_alerted:
             return
 
-        self._state = {"consecutive_failures": 0, "failure_alerted": False}
+        self._state["consecutive_failures"] = 0
+        self._state["failure_alerted"] = False
         # Persist before delivery so recovery is also one-shot across restarts.
         self._save()
         if was_alerted:
             self._send("recovery", "Bitget Tracker recovery: polling is healthy again.")
+
+    def record_auth_failure(self, reason: str) -> None:
+        """Send one persistent authentication incident until login recovers."""
+        if self._state.get("auth_alerted") is True:
+            return
+        self._state["auth_alerted"] = True
+        self._state["auth_reason"] = reason
+        self._save()
+        self._send("auth_failure", f"Bitget Tracker auth alert: {reason}")
+
+    def record_auth_success(self) -> None:
+        """Clear an authentication incident and send one recovery notification."""
+        was_alerted = self._state.get("auth_alerted") is True
+        self._state.pop("auth_alerted", None)
+        self._state.pop("auth_reason", None)
+        if not was_alerted:
+            return
+        self._save()
+        self._send("auth_recovery", "Bitget Tracker auth recovery: Bitget login is working again.")
 
     def _send(self, event: str, message: str) -> None:
         if self.notifier is None:
@@ -112,21 +132,26 @@ class AlertStateMachine:
         except Exception as error:  # Alert delivery must never stop polling.
             logger.warning("Alert delivery failed for event=%s (%s)", event, type(error).__name__)
 
-    def _load(self) -> dict[str, int | bool]:
+    def _load(self) -> dict[str, int | bool | str]:
+        default = {"consecutive_failures": 0, "failure_alerted": False}
         try:
             saved = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return {"consecutive_failures": 0, "failure_alerted": False}
+            return default
         if not isinstance(saved, dict):
-            return {"consecutive_failures": 0, "failure_alerted": False}
+            return default
         try:
             failures = min(max(int(saved.get("consecutive_failures", 0)), 0), FAILURE_THRESHOLD)
         except (TypeError, ValueError):
-            return {"consecutive_failures": 0, "failure_alerted": False}
-        return {
+            return default
+        state: dict[str, int | bool | str] = {
             "consecutive_failures": failures,
             "failure_alerted": failures == FAILURE_THRESHOLD and saved.get("failure_alerted") is True,
         }
+        if saved.get("auth_alerted") is True:
+            state["auth_alerted"] = True
+            state["auth_reason"] = str(saved.get("auth_reason", "Bitget authentication failed"))
+        return state
 
     def _save(self) -> None:
         payload = json.dumps(self._state, sort_keys=True)

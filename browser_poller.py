@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import re
 import tempfile
 import time
 from datetime import datetime, timezone, timedelta
@@ -53,10 +54,52 @@ _status = {
     "last_hist_response": None,
     "session_state": "unknown",
     "session_verified_this_cycle": False,
+    "login_state": "disabled",
+    "login_code": None,
+    "login_last_at": None,
 }
+
+_AUTO_LOGIN_LOCK = asyncio.Lock()
+_AUTO_LOGIN_NEXT_ATTEMPT = 0.0
 
 _SESSION_SUCCESS_CODES = {"00000", "0", "200"}
 _SESSION_EXPIRED_MARKERS = ("expired", "login", "log in", "sign in")
+
+
+def _bounded_int(value: object, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        return min(maximum, max(minimum, int(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def read_auto_login_config(env: dict | None = None) -> dict:
+    """Read bounded Pi login settings without exposing credential values."""
+    env = os.environ if env is None else env
+    return {
+        "enabled": str(env.get("AUTO_LOGIN_ENABLED", "")).strip().lower() == "true",
+        "max_attempts": _bounded_int(env.get("AUTO_LOGIN_MAX_ATTEMPTS"), 2, 1, 3),
+        "timeout_sec": _bounded_int(env.get("AUTO_LOGIN_TIMEOUT_SEC"), 180, 30, 300),
+        "phone": str(env.get("BITGET_PHONE", "")),
+        "password": str(env.get("BITGET_PASSWORD", "")),
+    }
+
+
+def classify_login_page_snapshot(snapshot: dict) -> tuple[str, str] | None:
+    """Classify only human-verification states; never solves them."""
+    text = str(snapshot.get("text", "")).lower()
+    selectors = " ".join(str(item).lower() for item in snapshot.get("selectors", []))
+    if "captcha" in selectors or re.search(r"captcha|verify you are human|slide to complete", text):
+        return "captcha_required", "captcha_pending"
+    if "one-time-code" in selectors or "otp" in selectors or re.search(
+        r"one[- ]time (?:password|code)|verification code|sms code|email code|authenticator code", text
+    ):
+        return "otp_required", "otp_pending"
+    if re.search(r"login (?:rejected|denied|failed)|incorrect password|invalid password|account locked", text):
+        return "failed", "rejected"
+    if re.search(r"approve (?:this |the )?login|check your (?:bitget )?app|waiting for approval|confirm (?:this |the )?login|cross-device verification|scan (?:the )?qr", text):
+        return "approval_required", "approval_pending"
+    return None
 
 
 def classify_session_response(response: dict | BaseException) -> str:
@@ -171,6 +214,173 @@ def get_status() -> dict:
     }
 
 
+def _set_login_status(state: str, code: str | None = None) -> None:
+    _status["login_state"] = state
+    _status["login_code"] = code
+    _status["login_last_at"] = datetime.now(BKK).isoformat()
+
+
+def _record_auto_login_alert(alerts: AlertStateMachine | None, state: str, code: str | None = None) -> None:
+    """Map login states to safe, actionable alerts without including credentials."""
+    if alerts is None:
+        return
+    if state == "success":
+        alerts.record_auth_success()
+        return
+
+    messages = {
+        "disabled": "Bitget cookie is missing or expired; automatic login is disabled.",
+        "credentials_missing": "Bitget cookie is missing or expired; auto-login credentials are not configured.",
+        "approval_pending": "Bitget cookie is missing or expired; approve the login in the Bitget app.",
+        "otp_pending": "Bitget cookie is missing or expired; OTP verification requires human action.",
+        "captcha_pending": "Bitget cookie is missing or expired; CAPTCHA requires human action.",
+        "attempts_exhausted": "Bitget auto-login failed after the bounded retry limit.",
+        "worker_error": "Bitget auto-login worker failed; manual login may be required.",
+        "rejected": "Bitget auto-login was rejected; check the account credentials.",
+    }
+    reason = messages.get(code or state, "Bitget authentication failed; manual login may be required.")
+    alerts.record_auth_failure(reason)
+
+
+async def _click_login_button(page, labels: list[str]) -> bool:
+    return await page.evaluate(
+        """expected => {
+            const labels = new Set(expected.map(item => item.toLowerCase()));
+            const button = [...document.querySelectorAll('button')].find(item => {
+                const rect = item.getBoundingClientRect();
+                return labels.has((item.textContent || '').trim().toLowerCase()) &&
+                    !item.disabled && rect.width > 0 && rect.height > 0;
+            });
+            if (!button) return false;
+            button.click();
+            return true;
+        }""",
+        labels,
+    )
+
+
+async def _login_page_snapshot(page) -> dict:
+    return await page.evaluate(
+        """() => ({
+            text: document.body ? document.body.innerText : '',
+            selectors: [
+                'input[autocomplete="one-time-code"]',
+                'input[name*="otp" i]',
+                'input[name*="code" i]',
+                'iframe[src*="captcha" i]',
+                'iframe[src*="recaptcha" i]',
+                'iframe[src*="hcaptcha" i]',
+                '[class*="captcha" i]'
+            ].filter(selector => {
+                const element = document.querySelector(selector);
+                if (!element) return false;
+                const rect = element.getBoundingClientRect();
+                const style = window.getComputedStyle(element);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            }),
+        })"""
+    )
+
+
+async def _verify_login_page(page, portfolio_id: str) -> dict:
+    return await page.evaluate(
+        """async portfolioId => {
+            try {
+                const response = await fetch('/v1/trace/mt5/data/tracePosition', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({portfolioId}),
+                });
+                const text = await response.text();
+                if (text.trimStart().startsWith('<')) return {status: response.status, error: 'html_redirect'};
+                const payload = JSON.parse(text);
+                return {status: response.status, code: payload?.code, msg: payload?.msg};
+            } catch (error) {
+                return {status: 0, error: String(error)};
+            }
+        }""",
+        portfolio_id,
+    )
+
+
+async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = None) -> bool:
+    """Use the existing cookie first, then wait for a human app approval."""
+    global _AUTO_LOGIN_NEXT_ATTEMPT
+    config = read_auto_login_config()
+    if not config["enabled"]:
+        _set_login_status("disabled")
+        _record_auto_login_alert(alerts, "disabled", "disabled")
+        return False
+    if not config["phone"] or not config["password"]:
+        _set_login_status("failed", "credentials_missing")
+        _record_auto_login_alert(alerts, "failed", "credentials_missing")
+        logger.warning("Auto login enabled but BITGET_PHONE/BITGET_PASSWORD is missing")
+        return False
+    now = time.monotonic()
+    if now < _AUTO_LOGIN_NEXT_ATTEMPT or _AUTO_LOGIN_LOCK.locked():
+        return False
+
+    async with _AUTO_LOGIN_LOCK:
+        _set_login_status("running")
+        try:
+            from playwright.async_api import async_playwright
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+                try:
+                    context = await browser.new_context(viewport={"width": 800, "height": 600})
+                    page = await context.new_page()
+                    await page.goto(f"{BITGET_BASE}/login", wait_until="domcontentloaded", timeout=30_000)
+                    username = page.locator('input[name="username"], input[type="email"], input[type="tel"]').first
+                    await username.fill(config["phone"], timeout=15_000)
+                    if not await _click_login_button(page, ["next", "continue"]):
+                        raise RuntimeError("username submit button not found")
+                    password = page.locator('input[type="password"]').first
+                    await password.fill(config["password"], timeout=15_000)
+                    if not await _click_login_button(page, ["next", "log in", "login", "continue"]):
+                        raise RuntimeError("password submit button not found")
+
+                    deadline = time.monotonic() + config["timeout_sec"]
+                    last_state = None
+                    for _attempt in range(config["max_attempts"]):
+                        while time.monotonic() < deadline:
+                            snapshot = await _login_page_snapshot(page)
+                            human_state = classify_login_page_snapshot(snapshot)
+                            if human_state and human_state[0] != last_state:
+                                last_state = human_state[0]
+                                _set_login_status(*human_state)
+                                if human_state[0] != "failed":
+                                    _record_auto_login_alert(alerts, human_state[0], human_state[1])
+                                logger.warning("Bitget login requires human action: %s", human_state[0])
+                            verification = await _verify_login_page(page, portfolio_id)
+                            if classify_session_response(verification) == "valid":
+                                local_storage = await page.evaluate(
+                                    "() => Object.fromEntries(Object.entries(localStorage))"
+                                )
+                                if await _persist_verified_cookie_jar(context, verification, local_storage):
+                                    _set_login_status("success")
+                                    _record_auto_login_alert(alerts, "success", "success")
+                                    reset_auth_status()
+                                    return True
+                            if human_state and human_state[0] == "failed":
+                                _record_auto_login_alert(alerts, "failed", human_state[1])
+                                break
+                            await asyncio.sleep(1)
+                        break
+                finally:
+                    await browser.close()
+        except Exception as error:
+            _set_login_status("failed", "worker_error")
+            _record_auto_login_alert(alerts, "failed", "worker_error")
+            logger.warning("Auto login failed: %s", type(error).__name__)
+            _AUTO_LOGIN_NEXT_ATTEMPT = time.monotonic() + 300
+            return False
+
+    _set_login_status("failed", "attempts_exhausted")
+    _record_auto_login_alert(alerts, "failed", "attempts_exhausted")
+    _AUTO_LOGIN_NEXT_ATTEMPT = time.monotonic() + 300
+    return False
+
+
 def _load_cookie_string() -> str:
     if COOKIES_FILE.exists():
         try:
@@ -255,6 +465,9 @@ async def start_poller(push_fn: Callable):
     while True:
         cookie_str = _load_cookie_string()
         if not cookie_str:
+            traders, trader_types = _load_traders()
+            if traders and await _run_auto_login(next(iter(traders.values()), ""), alerts):
+                continue
             _status["last_error"] = "No cookie set"
             _status["browser_alive"] = False
             alerts.record_failure("No cookie is configured")
@@ -281,6 +494,9 @@ async def start_poller(push_fn: Callable):
                 alerts.record_success()
             else:
                 alerts.record_failure("No authenticated Bitget response")
+
+        if _status.get("session_state") == "expired":
+            await _run_auto_login(next(iter(traders.values()), ""), alerts)
 
         _status["browser_alive"] = False
         # Add ±40% random jitter so the cadence doesn't look robotic to Bitget's
@@ -419,7 +635,9 @@ async def _renew_expiring_cookie(page, context, portfolio_id: str) -> bool:
     return await _persist_verified_cookie_jar(context, verification)
 
 
-async def _persist_verified_cookie_jar(context, verification: dict | BaseException) -> bool:
+async def _persist_verified_cookie_jar(
+    context, verification: dict | BaseException, local_storage: dict | None = None
+) -> bool:
     """Atomically store a browser cookie jar only after canonical verification."""
     if classify_session_response(verification) != "valid":
         logger.info("Skipping cookie replacement: canonical verification did not succeed")
@@ -441,6 +659,8 @@ async def _persist_verified_cookie_jar(context, verification: dict | BaseExcepti
     if payload.get("cookie") == new_str:
         return False  # nothing changed
     payload["cookie"] = new_str
+    if isinstance(local_storage, dict) and local_storage:
+        payload["local_storage"] = local_storage
     payload["self_refreshed_at"] = datetime.now(BKK).isoformat()
     _atomic_write_cookie_payload(payload)
     logger.info("Self-refreshed cookie persisted (%d chars)", len(new_str))

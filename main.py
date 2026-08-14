@@ -1099,6 +1099,27 @@ async def get_internal_snapshot():
         raise HTTPException(status_code=404, detail="no snapshot available")
     return snapshot
 
+
+@app.get("/internal/v1/status", dependencies=[Depends(require_internal_token)])
+async def get_internal_status():
+    """Serve secret-free Core/session status to the private Pi Viewer."""
+    from browser_poller import get_status
+
+    status = get_status()
+    return {
+        "running": bool(status.get("running")),
+        "browser_alive": bool(status.get("browser_alive")),
+        "auth_ok": status.get("auth_ok"),
+        "session_state": status.get("session_state"),
+        "login_state": status.get("login_state"),
+        "login_code": status.get("login_code"),
+        "login_last_at": status.get("login_last_at"),
+        "last_poll": status.get("last_poll"),
+        "last_scrape": status.get("last_scrape"),
+        "last_error": status.get("last_error"),
+        "has_cookie": bool(status.get("has_cookie")),
+    }
+
 @app.post("/api/push/mt5", dependencies=[Depends(require_write_token)])
 async def push_mt5(request: Request):
     body = await request.json()
