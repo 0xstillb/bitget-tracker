@@ -38,10 +38,10 @@ def test_cyd_ui_has_mockup_style_status_pnl_equity_and_compact_position_layout()
 def test_cyd_ui_uses_tft_espi_compatible_right_aligned_text_calls():
     source = FIRMWARE.read_text(encoding="utf-8")
 
-    assert "tft.drawRightString(equity, 305, 39, 4);" in source
-    assert '"TAP: REFRESH"' in source
-    assert '"Wi-Fi reconnecting"' in source
-    assert '"USB: setup"' in source
+    assert "tft.drawString(equity, 14, 27, 4);" in source
+    assert "Tap refresh" in source
+    assert '"Updated "' in source
+    assert "tft.drawRightString(amount, 306, 200, 1);" in source
 
 
 def test_cyd_templates_contain_no_real_wifi_or_service_secret():

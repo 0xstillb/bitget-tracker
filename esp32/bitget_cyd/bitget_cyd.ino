@@ -20,14 +20,14 @@ static const size_t SERIAL_LINE_MAX = 512;
 static const char *DEFAULT_VIEWER_URL = "http://192.168.1.121:8080";
 
 // Compact version of the Pi mockup palette. Values are RGB565 for ILI9341.
-static const uint16_t COLOR_BACKGROUND = 0x0841;
-static const uint16_t COLOR_PANEL = 0x10A3;
-static const uint16_t COLOR_BORDER = 0x2A85;
-static const uint16_t COLOR_ACCENT = 0x45FF;
-static const uint16_t COLOR_MUTED = 0x9D5B;
-static const uint16_t COLOR_POSITIVE = 0x55EA;
-static const uint16_t COLOR_NEGATIVE = 0xF8C6;
-static const uint16_t COLOR_WARNING = 0xF6A0;
+static const uint16_t COLOR_BACKGROUND = TFT_BLACK;
+static const uint16_t COLOR_PANEL = 0x0861;
+static const uint16_t COLOR_BORDER = 0x18C4;
+static const uint16_t COLOR_ACCENT = 0x4E9F;
+static const uint16_t COLOR_MUTED = 0x9CF3;
+static const uint16_t COLOR_POSITIVE = 0x34E8;
+static const uint16_t COLOR_NEGATIVE = 0xF967;
+static const uint16_t COLOR_WARNING = 0xFD20;
 
 #define XPT2046_IRQ 36
 #define XPT2046_MOSI 32
@@ -181,6 +181,10 @@ static void formatUsd(char *out, size_t length, double value) {
   snprintf(out, length, "%s$%.2f", value > 0.004 ? "+" : (value < -0.004 ? "-" : ""), fabs(value));
 }
 
+static void formatBalance(char *out, size_t length, double value) {
+  snprintf(out, length, "$%.2f", fabs(value));
+}
+
 static void formatPercent(char *out, size_t length, double value, double base) {
   if (base <= 0.004) {
     snprintf(out, length, "--");
@@ -311,7 +315,7 @@ static uint16_t connectionColor() {
 
 static const char *authLabel() {
   if (lastAuthState == "success") return "AUTH OK";
-  if (lastAuthState == "disabled") return "AUTO OFF";
+  if (lastAuthState == "disabled") return "AUTO LOGIN OFF";
   if (lastAuthState == "approval_required" || lastAuthState == "otp_required" || lastAuthState == "captcha_required") return "APPROVE";
   if (lastAuthState == "running") return "LOGIN...";
   if (lastAuthState == "failed") return "LOGIN FAIL";
@@ -325,120 +329,127 @@ static uint16_t authColor() {
 }
 
 static void drawMetricFrame(int x, const char *label) {
-  tft.fillRoundRect(x, 76, 100, 42, 6, COLOR_PANEL);
-  tft.drawRoundRect(x, 76, 100, 42, 6, COLOR_BORDER);
+  tft.fillRoundRect(x, 76, 73, 48, 6, COLOR_PANEL);
+  tft.drawRoundRect(x, 76, 73, 48, 6, COLOR_BORDER);
   tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
-  tft.drawString(label, x + 6, 81, 1);
+  tft.drawString(label, x + 5, 82, 1);
 }
 
 static void drawDashboardChrome() {
   tft.fillScreen(COLOR_BACKGROUND);
-  tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
-  tft.drawString("READ-ONLY  PI VIEWER", 8, 5, 1);
-
-  // Hero card follows the mockup: label, large equity, and live auth badge.
-  tft.fillRoundRect(5, 19, 310, 51, 7, COLOR_PANEL);
-  tft.drawRoundRect(5, 19, 310, 51, 7, COLOR_BORDER);
-  tft.fillRoundRect(5, 19, 4, 51, 2, COLOR_ACCENT);
+  // Exact 320x240 order from the approved mockup: hero, four cards, then panels.
+  tft.fillRoundRect(5, 5, 310, 65, 8, COLOR_PANEL);
+  tft.drawRoundRect(5, 5, 310, 65, 8, COLOR_BORDER);
   tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
-  tft.drawString("TOTAL EQUITY", 14, 25, 1);
+  tft.drawString("TOTAL EQUITY", 14, 12, 1);
 
-  drawMetricFrame(5, "TODAY");
-  drawMetricFrame(110, "OPEN");
-  drawMetricFrame(215, "ALL-TIME");
+  drawMetricFrame(5, "TODAY P&L");
+  drawMetricFrame(83, "OPEN P&L");
+  drawMetricFrame(161, "ALL-TIME P&L");
+  drawMetricFrame(239, "OPEN POSITIONS");
 
-  tft.setTextColor(TFT_WHITE, COLOR_BACKGROUND);
-  tft.drawString("OPEN POSITIONS", 7, 124, 1);
-  for (int index = 0; index < 2; ++index) {
-    int y = 136 + index * 19;
-    tft.fillRoundRect(5, y, 310, 17, 4, COLOR_PANEL);
-    tft.drawRoundRect(5, y, 310, 17, 4, COLOR_BORDER);
-  }
-
-  tft.fillRoundRect(5, 176, 310, 34, 6, COLOR_PANEL);
-  tft.drawRoundRect(5, 176, 310, 34, 6, COLOR_BORDER);
+  tft.fillRoundRect(5, 130, 310, 43, 7, COLOR_PANEL);
+  tft.drawRoundRect(5, 130, 310, 43, 7, COLOR_BORDER);
   tft.setTextColor(TFT_WHITE, COLOR_PANEL);
-  tft.drawString("TRACKED PORTFOLIO", 12, 181, 1);
-  tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
-  tft.drawString("TAP: REFRESH", 8, 217, 1);
+  tft.drawString("OPEN POSITIONS", 13, 136, 1);
+
+  tft.fillRoundRect(5, 178, 310, 43, 7, COLOR_PANEL);
+  tft.drawRoundRect(5, 178, 310, 43, 7, COLOR_BORDER);
+  tft.setTextColor(TFT_WHITE, COLOR_PANEL);
+  tft.drawString("TRACKED PORTFOLIOS", 13, 184, 1);
   screenChromeDrawn = true;
 }
 
-static void drawHeaderStatus() {
-  tft.fillRect(220, 3, 94, 12, COLOR_BACKGROUND);
-  tft.setTextColor(connectionColor(), COLOR_BACKGROUND);
-  tft.drawRightString(connectionLabel(), 312, 4, 1);
-  tft.fillRect(205, 24, 102, 10, COLOR_PANEL);
+static void drawHeroStatus() {
+  tft.fillRoundRect(218, 12, 89, 17, 9, COLOR_PANEL);
+  tft.drawRoundRect(218, 12, 89, 17, 9, authColor());
   tft.setTextColor(authColor(), COLOR_PANEL);
-  tft.drawRightString(authLabel(), 304, 25, 1);
+  tft.drawCentreString(authLabel(), 262, 17, 1);
 }
 
 static void drawEquity() {
   char equity[28];
-  formatUsd(equity, sizeof(equity), lastEquity);
-  tft.fillRect(62, 39, 243, 27, COLOR_PANEL);
+  formatBalance(equity, sizeof(equity), lastEquity);
+  tft.fillRect(13, 27, 200, 26, COLOR_PANEL);
   tft.setTextColor(TFT_WHITE, COLOR_PANEL);
-  tft.drawRightString(equity, 305, 39, 4);
+  tft.drawString(equity, 14, 27, 4);
+  tft.fillRect(13, 55, 200, 11, COLOR_PANEL);
+  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+  tft.drawString(String("Updated ") + compactUpdated(lastUpdated), 14, 56, 1);
 }
 
-static void drawMetricValue(int x, double value) {
+static void drawMetricValue(int x, double value, double base) {
   char amount[20];
+  char percent[16];
   formatUsd(amount, sizeof(amount), value);
-  tft.fillRect(x + 5, 96, 90, 19, COLOR_PANEL);
+  formatPercent(percent, sizeof(percent), value, base);
+  tft.fillRect(x + 4, 96, 65, 25, COLOR_PANEL);
   tft.setTextColor(pnlColor(value), COLOR_PANEL);
-  tft.drawCentreString(amount, x + 50, 98, 2);
+  tft.drawCentreString(amount, x + 36, 98, 2);
+  tft.setTextColor(value == 0.0 ? COLOR_MUTED : pnlColor(value), COLOR_PANEL);
+  tft.drawCentreString(percent, x + 36, 113, 1);
 }
 
-static void drawPositionRow(int index, int y) {
-  tft.fillRoundRect(6, y + 1, 308, 15, 4, COLOR_PANEL);
-  if (index >= lastPositionCount) {
+static void drawPositionMetric() {
+  tft.fillRect(243, 96, 65, 25, COLOR_PANEL);
+  tft.setTextColor(TFT_WHITE, COLOR_PANEL);
+  tft.drawCentreString(String(lastOpenPositionCount), 275, 98, 2);
+  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+  tft.drawCentreString(lastOpenPositionCount == 1 ? "1 active" : String(lastOpenPositionCount) + " active", 275, 113, 1);
+}
+
+static void drawPositionPanel() {
+  tft.fillRect(13, 149, 295, 20, COLOR_PANEL);
+  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+  tft.drawRightString(String(lastOpenPositionCount) + " active", 306, 136, 1);
+  if (lastPositionCount == 0) {
     tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
-    tft.drawString(index == 0 ? "No active data" : "", 12, y + 4, 1);
+    tft.drawCentreString("No active data", 160, 153, 1);
     return;
   }
   tft.setTextColor(TFT_WHITE, COLOR_PANEL);
-  tft.drawString(lastPositions[index], 12, y + 4, 1);
+  tft.drawString(lastPositions[0], 14, 153, 1);
   char amount[18];
-  formatUsd(amount, sizeof(amount), lastPositionPnl[index]);
-  tft.setTextColor(pnlColor(lastPositionPnl[index]), COLOR_PANEL);
-  tft.drawRightString(amount, 306, y + 4, 1);
+  formatUsd(amount, sizeof(amount), lastPositionPnl[0]);
+  tft.setTextColor(pnlColor(lastPositionPnl[0]), COLOR_PANEL);
+  tft.drawRightString(amount, 306, 153, 1);
 }
 
 static void drawPortfolio() {
-  tft.fillRect(10, 193, 300, 14, COLOR_PANEL);
+  tft.fillRect(12, 196, 296, 20, COLOR_PANEL);
+  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+  tft.drawRightString(String(lastTraderCount) + " tracked", 306, 184, 1);
   uint16_t ringColor = lastTraderCount > 0 ? COLOR_POSITIVE : COLOR_MUTED;
-  tft.fillCircle(20, 199, 7, ringColor);
-  tft.fillCircle(20, 199, 4, COLOR_PANEL);
-  tft.setTextColor(lastTraderCount > 0 ? TFT_WHITE : COLOR_MUTED, COLOR_PANEL);
-  tft.drawString(lastPortfolioName, 32, 194, 1);
+  tft.drawCircle(23, 205, 8, ringColor);
+  tft.drawCircle(23, 205, 7, ringColor);
+  if (lastTraderCount == 0) {
+    tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
+    tft.drawString("No tracked data", 40, 200, 1);
+    return;
+  }
+  tft.setTextColor(TFT_WHITE, COLOR_PANEL);
+  tft.drawString(lastPortfolioName, 40, 200, 1);
   char amount[18];
   formatUsd(amount, sizeof(amount), lastPortfolioPnl);
   tft.setTextColor(pnlColor(lastPortfolioPnl), COLOR_PANEL);
-  tft.drawRightString(amount, 304, 194, 1);
+  tft.drawRightString(amount, 306, 200, 1);
 }
 
 static void drawFooter() {
-  tft.fillRect(132, 214, 182, 21, COLOR_BACKGROUND);
+  tft.fillRect(5, 225, 310, 12, COLOR_BACKGROUND);
   tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
-  tft.drawRightString(String("Updated ") + compactUpdated(lastUpdated), 312, 217, 1);
-  String network = !configured ? "USB: setup" : (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Wi-Fi reconnecting");
-  tft.drawRightString(network, 312, 229, 1);
+  tft.drawCentreString(String("Updated ") + compactUpdated(lastUpdated) + "  ·  Tap refresh", 160, 228, 1);
 }
 
 static void renderDashboard() {
   if (!screenChromeDrawn) drawDashboardChrome();
-  drawHeaderStatus();
+  drawHeroStatus();
   drawEquity();
-  drawMetricValue(5, lastTodayPnl);
-  drawMetricValue(110, lastOpenPnl);
-  drawMetricValue(215, lastAllPnl);
-  for (int index = 0; index < 2; ++index) drawPositionRow(index, 136 + index * 19);
-  tft.fillRect(263, 120, 50, 10, COLOR_BACKGROUND);
-  tft.setTextColor(COLOR_MUTED, COLOR_BACKGROUND);
-  tft.drawRightString(String(lastOpenPositionCount) + " active", 312, 124, 1);
-  tft.fillRect(258, 180, 54, 10, COLOR_PANEL);
-  tft.setTextColor(COLOR_MUTED, COLOR_PANEL);
-  tft.drawRightString(String(lastTraderCount) + " tracked", 307, 181, 1);
+  drawMetricValue(5, lastTodayPnl, lastEquity);
+  drawMetricValue(83, lastOpenPnl, lastEquity);
+  drawMetricValue(161, lastAllPnl, lastEquity);
+  drawPositionMetric();
+  drawPositionPanel();
   drawPortfolio();
   drawFooter();
 }
