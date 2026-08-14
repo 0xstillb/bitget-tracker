@@ -50,7 +50,6 @@ function Read-PlainPassword {
 }
 
 try {
-    Add-Type -AssemblyName System.IO.Ports -ErrorAction SilentlyContinue
     $selectedPort = Select-SerialPort -RequestedPort $Port
     Write-Host "Using $selectedPort" -ForegroundColor Green
 
