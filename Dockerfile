@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 
 COPY . .
 
+# Git on Windows does not track the exec bit; ensure the entrypoint runs.
+RUN chmod +x /app/docker-entrypoint.sh
+
 EXPOSE 10000
 
 CMD ["/app/docker-entrypoint.sh"]
