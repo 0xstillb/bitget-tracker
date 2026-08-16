@@ -189,7 +189,11 @@ def classify_login_page_snapshot(snapshot: dict) -> tuple[str, str] | None:
     """Classify only human-verification states; never solves them."""
     text = str(snapshot.get("text", "")).lower()
     selectors = " ".join(str(item).lower() for item in snapshot.get("selectors", []))
-    if "captcha" in selectors or re.search(r"captcha|verify you are human|slide to complete", text):
+    if "captcha" in selectors or re.search(
+        r"captcha|verify you are human|slide to complete|select\s*\d+\s*image|"
+        r"select\s*\d+\s*picture|choose\s*\d+\s*image|complete\s+the\s+verification",
+        text,
+    ):
         return "captcha_required", "captcha_pending"
     if "one-time-code" in selectors or "otp" in selectors or re.search(
         r"one[- ]time (?:password|code)|verification code|sms code|email code|authenticator code", text
@@ -627,7 +631,23 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                     if not await _click_login_button(page, list(flow["submit_labels"]), wait_ms=10_000):
                         raise RuntimeError("username submit button not found")
                     await page.wait_for_timeout(2_000)
-                    await _fill_login_field(page, flow["password_selectors"], config["password"], "password")
+                    try:
+                        await _fill_login_field(page, flow["password_selectors"], config["password"], "password")
+                    except Exception as error:
+                        # Bitget can answer Next with a human check (image
+                        # CAPTCHA / OTP) instead of the password form. Report
+                        # that state instead of a generic login timeout.
+                        state, code = classify_auto_login_error(error)
+                        if code == "login_timeout":
+                            snapshot = await _login_page_snapshot(page)
+                            human_state = classify_login_page_snapshot(snapshot)
+                            if human_state and human_state[0] != "failed":
+                                _set_login_status(*human_state)
+                                _record_auto_login_alert(alerts, human_state[0], human_state[1])
+                                logger.warning("Bitget login requires human action: %s", human_state[0])
+                                _AUTO_LOGIN_NEXT_ATTEMPT = time.monotonic() + 300
+                                return False
+                        raise
                     if not await _click_login_button(page, list(flow["submit_labels"]), wait_ms=10_000):
                         raise RuntimeError("password submit button not found")
                     await page.wait_for_timeout(2_000)
