@@ -88,6 +88,7 @@ def test_auth_alert_is_specific_deduplicated_and_recovers(tmp_path):
 
     assert notifier.events == [
         ("auth_failure", "Bitget Tracker auth alert: Bitget cookie expired; approval is required in the Bitget app"),
+        ("auth_failure", "Bitget Tracker auth alert: Bitget auto-login still waiting for approval"),
         ("auth_recovery", "Bitget Tracker auth recovery: Bitget login is working again."),
     ]
 
