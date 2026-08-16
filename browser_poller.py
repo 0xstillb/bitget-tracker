@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone, timedelta
@@ -33,6 +34,22 @@ CHROMIUM_ARGS = [
     "--js-flags=--max-old-space-size=64",
     "--enable-low-end-device-mode",
 ]
+
+# Login browser args mirror the proven reference (bitget-alert-main login.js):
+# a plain, fingerprint-friendly Chromium. The resource-saver flags above stay
+# on the poller browser only — they are exactly what Bitget's bot detection
+# keys on when deciding whether to show a CAPTCHA.
+LOGIN_CHROMIUM_ARGS = [
+    "--no-sandbox", "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage", "--disable-gpu",
+]
+
+# The reference relies on puppeteer-extra-plugin-stealth; playwright-stealth is
+# its Playwright port. Guarded so the poller still imports without it.
+try:  # pragma: no cover - exercised through the guard helper
+    from playwright_stealth import Stealth as _Stealth
+except ImportError:  # pragma: no cover - dependency guarded at deploy time
+    _Stealth = None
 
 # Trade history is persisted server-side (history.json) and merged on each push.
 # So the poller only needs the latest page most cycles; a full 30-day backfill
@@ -82,9 +99,39 @@ def read_auto_login_config(env: dict | None = None) -> dict:
         "enabled": str(env.get("AUTO_LOGIN_ENABLED", "")).strip().lower() == "true",
         "max_attempts": _bounded_int(env.get("AUTO_LOGIN_MAX_ATTEMPTS"), 2, 1, 3),
         "timeout_sec": _bounded_int(env.get("AUTO_LOGIN_TIMEOUT_SEC"), 180, 30, 300),
+        # The reference runs the login browser headful (a real window). On the
+        # Pi the container runs Xvfb; Windows dev machines open a real window.
+        "headful": str(env.get("BITGET_HEADFUL", "true")).strip().lower() == "true",
         "phone": str(env.get("BITGET_PHONE", "")),
         "password": str(env.get("BITGET_PASSWORD", "")),
     }
+
+
+def _login_browser_launch_config(config: dict | None = None) -> tuple[bool, list[str]]:
+    """Decide (headless, args) for the auto-login browser, mirroring the reference.
+
+    Headful needs a display: the Pi image runs Xvfb, Windows dev machines open
+    a real window. On Linux without DISPLAY (e.g. Render free tier) the login
+    falls back to headless so the flow still runs — just without the stealth
+    benefit of a real window.
+    """
+    config = read_auto_login_config() if config is None else config
+    headful = bool(config.get("headful"))
+    if headful and not os.environ.get("DISPLAY") and sys.platform != "win32":
+        logger.warning(
+            "BITGET_HEADFUL=true but DISPLAY is not set; falling back to headless login"
+        )
+        headful = False
+    return (not headful, LOGIN_CHROMIUM_ARGS)
+
+
+async def _apply_login_stealth(context) -> bool:
+    """Apply the stealth plugin to the login context (reference: stealth plugin)."""
+    if _Stealth is None:
+        logger.warning("playwright-stealth is not installed; login will be more detectable")
+        return False
+    await _Stealth().apply_stealth_async(context)
+    return True
 
 
 def login_flow_config() -> dict:
@@ -451,8 +498,81 @@ async def _verify_login_page(page, portfolio_id: str) -> dict:
     )
 
 
+async def _wait_for_login_url(page, timeout_sec: float) -> bool:
+    """Wait until the URL leaves /login|/signin, mirroring waitForLoginSuccess.
+
+    A 3s settle follows the URL change so the freshly issued cookies are all
+    present before the caller persists the jar.
+    """
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            url = page.url
+        except Exception:
+            return False
+        if "bitget.com" in url and "/login" not in url and "/signin" not in url:
+            await page.wait_for_timeout(3_000)
+            return True
+        await page.wait_for_timeout(1_000)
+    return False
+
+
+async def _refresh_session_from_page(page, context, portfolio_id: str) -> bool:
+    """Persist the current page's jar only when the server still accepts it.
+
+    Mirrors the reference tryRefreshSession renewal: the server refreshed the
+    session cookie when we visited with the old jar. This codebase additionally
+    requires a canonical authenticated probe before the jar may replace the
+    last-good cookie on disk.
+    """
+    jar = await context.cookies("https://www.bitget.com")
+    if not any(cookie.get("name") == "bt_newsessionid" for cookie in jar):
+        logger.info("Silent session refresh: server invalidated the stored session")
+        return False
+    verification = await _verify_login_page(page, portfolio_id)
+    return await _persist_verified_cookie_jar(context, verification)
+
+
+async def _try_silent_session_refresh(portfolio_id: str) -> bool:
+    """Renew an existing session with its own cookies before a full login.
+
+    Reference order in autoLogin(): tryRefreshSession() first — visit Bitget
+    headless with the stored jar; if the server still accepts the session it
+    extends it and no credentials are ever typed. Only when that fails do we
+    fall through to the headful login form.
+    """
+    cookie_str = _load_cookie_string()
+    if not cookie_str:
+        return False
+    if not any(cookie.get("name") == "bt_newsessionid"
+               for cookie in _parse_cookie_string(cookie_str)):
+        return False
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True, args=LOGIN_CHROMIUM_ARGS)
+            try:
+                context = await browser.new_context(viewport={"width": 800, "height": 600})
+                await context.add_cookies(_parse_cookie_string(cookie_str))
+                page = await context.new_page()
+                await page.goto(f"{BITGET_BASE}", wait_until="networkidle", timeout=30_000)
+                await page.wait_for_timeout(3_000)
+                return await _refresh_session_from_page(page, context, portfolio_id)
+            finally:
+                await browser.close()
+    except Exception as error:
+        logger.warning("Silent session refresh failed: %s",
+                       classify_auto_login_error(error)[1])
+        return False
+
+
 async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = None) -> bool:
-    """Use the existing cookie first, then wait for a human app approval."""
+    """Renew the existing cookie silently, then run the proven headful login.
+
+    Mirrors the reference: silent renewal first, then a visible, stealth
+    Chromium that types each key, waits for the Next button to become enabled,
+    clears interstitial dialogs, and treats "URL left /login" as success.
+    """
     global _AUTO_LOGIN_NEXT_ATTEMPT
     config = read_auto_login_config()
     if not config["enabled"]:
@@ -471,11 +591,19 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
     async with _AUTO_LOGIN_LOCK:
         _set_login_status("running")
         try:
+            if await _try_silent_session_refresh(portfolio_id):
+                _set_login_status("success", "refreshed")
+                _record_auto_login_alert(alerts, "success", "success")
+                reset_auth_status()
+                return True
+
             from playwright.async_api import async_playwright
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+                headless, launch_args = _login_browser_launch_config(config)
+                browser = await playwright.chromium.launch(headless=headless, args=launch_args)
                 try:
-                    context = await browser.new_context(viewport={"width": 800, "height": 600})
+                    context = await browser.new_context()
+                    await _apply_login_stealth(context)
                     existing_cookies = full_login_cookies(_load_cookie_string())
                     if existing_cookies:
                         await context.add_cookies(existing_cookies)
@@ -505,33 +633,33 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                     await page.wait_for_timeout(2_000)
                     await _handle_login_interstitials(page)
 
-                    deadline = time.monotonic() + config["timeout_sec"]
                     last_state = None
                     for _attempt in range(config["max_attempts"]):
-                        while time.monotonic() < deadline:
-                            snapshot = await _login_page_snapshot(page)
-                            human_state = classify_login_page_snapshot(snapshot)
-                            if human_state and human_state[0] != last_state:
-                                last_state = human_state[0]
-                                _set_login_status(*human_state)
-                                if human_state[0] != "failed":
-                                    _record_auto_login_alert(alerts, human_state[0], human_state[1])
-                                logger.warning("Bitget login requires human action: %s", human_state[0])
+                        if await _wait_for_login_url(page, config["timeout_sec"]):
+                            local_storage = await page.evaluate(
+                                "() => Object.fromEntries(Object.entries(localStorage))"
+                            )
                             verification = await _verify_login_page(page, portfolio_id)
-                            if classify_session_response(verification) == "valid":
-                                local_storage = await page.evaluate(
-                                    "() => Object.fromEntries(Object.entries(localStorage))"
-                                )
-                                if await _persist_verified_cookie_jar(context, verification, local_storage):
-                                    _set_login_status("success")
-                                    _record_auto_login_alert(alerts, "success", "success")
-                                    reset_auth_status()
-                                    return True
-                            if human_state and human_state[0] == "failed":
-                                _record_auto_login_alert(alerts, "failed", human_state[1])
-                                break
-                            await asyncio.sleep(1)
-                        break
+                            if await _persist_verified_cookie_jar(context, verification, local_storage):
+                                _set_login_status("success")
+                                _record_auto_login_alert(alerts, "success", "success")
+                                reset_auth_status()
+                                return True
+                            logger.warning(
+                                "Login URL changed but the authenticated probe did not confirm the session"
+                            )
+                            continue
+                        snapshot = await _login_page_snapshot(page)
+                        human_state = classify_login_page_snapshot(snapshot)
+                        if human_state and human_state[0] != last_state:
+                            last_state = human_state[0]
+                            _set_login_status(*human_state)
+                            if human_state[0] != "failed":
+                                _record_auto_login_alert(alerts, human_state[0], human_state[1])
+                            logger.warning("Bitget login requires human action: %s", human_state[0])
+                        if human_state and human_state[0] == "failed":
+                            _record_auto_login_alert(alerts, "failed", human_state[1])
+                            break
                 finally:
                     await browser.close()
         except Exception as error:
