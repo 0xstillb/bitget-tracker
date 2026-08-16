@@ -105,8 +105,15 @@ class AlertStateMachine:
             self._send("recovery", "Bitget Tracker recovery: polling is healthy again.")
 
     def record_auth_failure(self, reason: str) -> None:
-        """Send one persistent authentication incident until login recovers."""
-        if self._state.get("auth_alerted") is True:
+        """Notify on each distinct auth failure reason until login recovers.
+
+        A changed reason re-alerts (e.g. 'disabled' then CAPTCHA) so a new
+        incident still reaches Discord after an earlier alert; the same reason
+        stays one-shot to avoid spamming every poll cycle.
+        """
+        if (self._state.get("auth_alerted") is True
+                and self._state.get("auth_reason") == reason):
+            logger.warning("Auth remains failed (%s) after alert", reason)
             return
         self._state["auth_alerted"] = True
         self._state["auth_reason"] = reason
