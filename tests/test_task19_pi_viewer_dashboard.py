@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from pi_viewer import PiViewer, ViewerApplication, ViewerCache
@@ -76,14 +77,44 @@ def test_pi_viewer_proxies_dashboard_api_routes_to_core(tmp_path):
     assert status == 200 and json.loads(body) == {"ok": True}
     status, _headers, _body = app.response("GET", "/internal/v1/status")
     assert status == 200
-    status, _headers, _body = app.response("POST", "/api/poller/cookie", b'{"cookie":"x"}')
-    assert status == 200
 
     assert client.calls == [
         ("GET", "/api/poller", b""),
         ("GET", "/internal/v1/status", b""),
-        ("POST", "/api/poller/cookie", b'{"cookie":"x"}'),
     ]
+
+
+def test_pi_viewer_rejects_write_methods_to_keep_the_read_only_concept(tmp_path):
+    class SpyingClient(CoreClient):
+        def proxy(self, *_args, **_kwargs):
+            raise AssertionError("write methods must never reach the proxy")
+
+    app = ViewerApplication(PiViewer(SpyingClient(), ViewerCache(tmp_path / "cache.json")))
+
+    status, headers, body = app.response("POST", "/api/poller/cookie", b'{"cookie":"x"}')
+
+    assert status == 405
+    assert headers["Allow"] == "GET"
+    assert "read-only" in json.loads(body)["detail"]
+
+
+def test_pi_viewer_injects_the_readonly_flag_only_into_the_dashboard(tmp_path):
+    app = ViewerApplication(PiViewer(CoreClient(), ViewerCache(tmp_path / "cache.json")))
+
+    _status, _headers, dashboard = app.response("GET", "/")
+    _status, _headers, journal = app.response("GET", "/journal.html")
+
+    assert "window.BITGET_READONLY=true" in dashboard
+    assert "window.BITGET_READONLY=true" not in journal
+
+
+def test_dashboard_readonly_mode_blocks_writes_in_the_page_itself():
+    source = Path("static/index.html").read_text(encoding="utf-8")
+
+    assert "window.BITGET_READONLY === true" in source
+    assert "document.body.classList.add('readonly')" in source
+    assert "function writeFetch(url, options = {})" in source
+    assert "if (BITGET_READONLY)" in source
 
 
 def test_pi_viewer_keeps_esp32_and_viewer_routes_local_not_proxied(tmp_path):

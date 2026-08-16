@@ -369,13 +369,18 @@ class ViewerApplication:
     def _dashboard_page(self, name: str) -> tuple[int, dict[str, str], str]:
         page = self.static_dir / name
         try:
-            return 200, {
-                "Content-Type": "text/html; charset=utf-8",
-                "Cache-Control": "no-store, max-age=0",
-            }, page.read_text(encoding="utf-8")
+            html = page.read_text(encoding="utf-8")
         except OSError:
             return 503, {"Content-Type": "application/json"}, json.dumps(
                 {"detail": f"static/{name} is not available on this deployment"})
+        if name == "index.html" and "BITGET_READONLY" not in html:
+            # The viewer is read-only: paste/settings stay on the Core dashboard.
+            html = html.replace(
+                "</head>", "<script>window.BITGET_READONLY=true;</script></head>", 1)
+        return 200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store, max-age=0",
+        }, html
 
     def _proxy_request(self, method: str, path: str, body: bytes) -> tuple[int, dict[str, str], str]:
         proxy = getattr(self.viewer.client, "proxy", None)
@@ -394,6 +399,9 @@ class ViewerApplication:
             return self._dashboard_page("journal.html")
         if (route.startswith(("/api/", "/internal/"))
                 and route not in self.VIEWER_LOCAL_ROUTES):
+            if method != "GET":
+                return 405, {"Allow": "GET", "Content-Type": "application/json"}, json.dumps(
+                    {"detail": "read-only viewer; use the Core dashboard for changes"})
             proxy_path = route + (f"?{parsed.query}" if parsed.query else "")
             return self._proxy_request(method, proxy_path, body)
         if method != "GET":

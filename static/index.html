@@ -472,6 +472,10 @@
     .eye-toggle { background: none; border: 1px solid var(--border-hi); border-radius: 7px;
       color: var(--muted); font-size: 11px; padding: 3px 8px; cursor: pointer; }
     body.hide-pnl .eye-toggle { color: var(--amber); border-color: var(--amber); }
+    body.readonly #cookie-expired-banner,
+    body.readonly #open-cookie-btn,
+    body.readonly #goal-ring-wrap { display: none !important; }
+    body.readonly #status-dot { cursor: default; }
     body.hide-pnl :is(#total-balance,#total-investment,#daily-pnl,#open-pnl,#all-time-pnl,
       #inv-deposits,#inv-withdrawals,#inv-net,#goal-remaining,#goal-ring-pct,#daily-sub,
       #eo-balance,#eo-equity,#eo-pnl,.stat-val,.trader-metric-val,#trades-body,
@@ -932,6 +936,12 @@
 </div>
 
 <script>
+  // ── Read-only mode ────────────────────────────────────────────
+  // The Pi Viewer serves this page with window.BITGET_READONLY=true:
+  // display everything, but never offer cookie paste / settings / writes.
+  const BITGET_READONLY = window.BITGET_READONLY === true;
+  if (BITGET_READONLY) document.body.classList.add('readonly');
+
   // ── Theme ─────────────────────────────────────────────────────
   const THEME_KEY = 'bitget_theme';
   function applyTheme(theme) {
@@ -1904,6 +1914,9 @@
   });
 
   function writeFetch(url, options = {}) {
+    if (BITGET_READONLY) {
+      return Promise.reject(new Error('This is a read-only view. Use the Core dashboard to change settings.'));
+    }
     let token = sessionStorage.getItem('bitget_tracker_write_token');
     if (!token) {
       token = window.prompt('Enter the tracker write token');
@@ -1920,6 +1933,7 @@
   const inputInv = document.getElementById('input-investment');
 
   function openSettings() {
+    if (BITGET_READONLY) return;
     fetch('/api/settings').then(r => r.json()).then(s => {
       inputBal.value = s.balance || '';
       inputInv.value = s.investment || '';
@@ -1954,6 +1968,7 @@
   const cookieStatus = document.getElementById('cookie-status');
 
   function openCookieModal() {
+    if (BITGET_READONLY) return;
     cookieInput.value = '';
     cookieStatus.style.display = 'none';
     fetch('/api/poller').then(r => r.json()).then(s => {
