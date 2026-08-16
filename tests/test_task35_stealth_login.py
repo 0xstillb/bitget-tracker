@@ -67,6 +67,15 @@ def test_auto_login_config_exposes_bounded_headful_toggle():
     assert browser_poller.read_auto_login_config({"BITGET_HEADFUL": "false"})["headful"] is False
 
 
+def test_image_select_captcha_is_classified_as_human_action():
+    assert browser_poller.classify_login_page_snapshot({
+        "text": "Select 1 images with  bus, Close, Refresh"
+    }) == ("captcha_required", "captcha_pending")
+    assert browser_poller.classify_login_page_snapshot({
+        "text": "please select 3 pictures with fire hydrants"
+    }) == ("captcha_required", "captcha_pending")
+
+
 # --------------------------------------------------------------------- stealth
 
 def test_stealth_plugin_is_applied_to_the_login_context(monkeypatch):
