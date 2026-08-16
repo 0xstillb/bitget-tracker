@@ -4,11 +4,12 @@ Use `INSTALL_PI.md` for the complete first-install and upgrade procedure.
 
 The Pi runs `pi_viewer.py`: a LAN service that fetches the Core snapshot
 through Tailscale, keeps an atomic local cache, and **serves the real
-dashboard** (`static/index.html` + `static/journal.html`). Every other
-`/api/*` and `/internal/*` route is proxied to Core, so the Viewer page is
-identical to the Core dashboard — including Polling Setup and cookie paste
-(writes still require the dashboard write token). It does not run Chromium,
-Playwright, or Bitget login flows.
+dashboard read-only** (`static/index.html` + `static/journal.html`).
+Dashboard `/api/*` and `/internal/*` GET routes are proxied to Core; every
+write method is rejected (`405`) and the page runs with
+`window.BITGET_READONLY=true` (no Polling Setup, no cookie paste, no
+settings). Cookie paste and settings stay on the Core dashboard only. It
+does not run Chromium, Playwright, or Bitget login flows.
 
 Copy `pi-viewer.env.example` to `/etc/bitget-pi-viewer/viewer.env`, replace the
 Tailscale address and token, set mode `0600`, then install the systemd unit.
