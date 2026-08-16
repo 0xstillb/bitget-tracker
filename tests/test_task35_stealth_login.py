@@ -198,5 +198,5 @@ def test_docker_image_runs_login_under_xvfb():
 
     assert "xvfb" in dockerfile
     assert 'CMD ["/app/docker-entrypoint.sh"]' in dockerfile
-    assert 'xvfb-run -a -s "-screen 0 1280x720x24"' in entrypoint
+    assert 'Xvfb :99 -screen 0 1280x720x24 -nolisten tcp -ac' in entrypoint
     assert 'python run_core.py' in entrypoint
