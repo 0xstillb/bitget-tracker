@@ -2,4 +2,5 @@ fastapi
 uvicorn
 python-dotenv
 playwright
+playwright-stealth==2.0.3
 httpx

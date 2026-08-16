@@ -4,11 +4,18 @@ This optional mode is for the current home-Pi topology. Core keeps the
 last-good Bitget cookie on the Pi, verifies it on every poll cycle, and renews
 it before expiry when Bitget accepts the existing session.
 
-If the cookie is expired, Core opens a private headless Chromium login flow,
-enters the configured phone/email and password, then waits for the user to
-approve the login in the Bitget App. It never bypasses CAPTCHA, OTP, or device
-approval. A replacement cookie is written only after a real authenticated
-Bitget endpoint returns success.
+If the cookie is expired, Core opens the login flow in a visible (headful)
+Chromium with the stealth plugin — the exact setup of the proven
+`bitget-alert-main` reference — enters the configured phone/email and password,
+then waits for the user to approve the login in the Bitget App. It never
+bypasses CAPTCHA, OTP, or device approval. A replacement cookie is written only
+after a real authenticated Bitget endpoint returns success.
+
+The container starts Xvfb automatically and runs Chromium headful
+(`BITGET_HEADFUL=true` default). On Linux without `DISPLAY` (e.g. Render free
+tier) the login falls back to a headless browser with a warning; a headless
+browser is more likely to hit Bitget's CAPTCHA, which is exactly why the Pi
+runs headful.
 
 ## Core environment
 
@@ -20,6 +27,7 @@ COOKIES_PATH=/data/cookies.json
 AUTO_LOGIN_ENABLED=true
 AUTO_LOGIN_MAX_ATTEMPTS=2
 AUTO_LOGIN_TIMEOUT_SEC=180
+BITGET_HEADFUL=true
 BITGET_PHONE=your-login-email-or-phone
 BITGET_PASSWORD=your-bitget-password
 

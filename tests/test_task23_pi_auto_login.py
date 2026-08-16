@@ -10,6 +10,7 @@ def test_pi_auto_login_config_is_disabled_and_bounded_by_default():
         "enabled": False,
         "max_attempts": 2,
         "timeout_sec": 180,
+        "headful": True,
         "phone": "",
         "password": "",
     }
@@ -28,6 +29,7 @@ def test_pi_auto_login_config_caps_attempts_and_timeout():
         "enabled": True,
         "max_attempts": 3,
         "timeout_sec": 300,
+        "headful": True,
         "phone": "user",
         "password": "pass",
     }

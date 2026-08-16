@@ -64,7 +64,9 @@ def test_private_deployment_examples_do_not_publish_the_core():
     service = Path("deploy/bitget-tracker-core.service.example").read_text(encoding="utf-8")
 
     assert "0.0.0.0" not in dockerfile
-    assert "run_core.py" in dockerfile
+    assert 'CMD ["/app/docker-entrypoint.sh"]' in dockerfile
+    entrypoint = Path("docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert "run_core.py" in entrypoint
     assert "tag:bitget-viewer" in acl
     assert '"dst": ["tag:bitget-core"]' in acl
     assert '"ip": ["tcp:10000"]' in acl
