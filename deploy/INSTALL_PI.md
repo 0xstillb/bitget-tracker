@@ -128,6 +128,22 @@ policy LAN-only อยู่ใน `CLOUDFLARE_VIEWER.md`.
 เฉพาะ Viewer ผ่าน Cloudflare Access. ตรวจ config ด้วย
 `cloudflared tunnel ingress rule`; ห้ามเพิ่ม Core port 10000 เป็น ingress.
 
+### mDNS (ทางลัด `http://bitget.local:8080`)
+
+ติดตั้ง Avahi บน Pi เพื่อให้เข้าถึง Viewer/Dashboard ด้วยชื่อแทน IP (เครื่อง
+Windows/macOS/Android ใน LAN เดียวกัน resolve `.local` ได้):
+
+```sh
+sudo apt-get update && sudo apt-get install -y avahi-daemon
+sudo sed -i 's/^#\?host-name=.*/host-name=bitget/' /etc/avahi/avahi-daemon.conf
+sudo systemctl enable --now avahi-daemon
+# ตรวจ
+avahi-resolve -n bitget.local   # หรือจาก PC: ping bitget.local
+```
+
+จากนั้นเปิด `http://bitget.local:8080/` ได้เลย (ใช้แทน `<PI_LAN_IP>` ได้ทุกที่
+รวมถึง base URL ของ firmware ESP32).
+
 ## 7. Upgrade
 
 clone merge commit ใหม่เป็น release directory ใหม่, ยืนยัน SHA/worktree แล้ว

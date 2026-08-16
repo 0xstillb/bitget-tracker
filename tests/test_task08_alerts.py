@@ -114,3 +114,42 @@ def test_selects_discord_or_telegram_from_environment(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "bot-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat-id")
     assert isinstance(notifier_from_environment(), TelegramNotifier)
+
+
+def test_auth_failure_alerts_once_for_the_same_reason():
+    with alert_state_directory() as directory:
+        notifier = RecordingNotifier()
+        alerts = AlertStateMachine(directory / "alert-state.json", notifier)
+
+        alerts.record_auth_failure("CAPTCHA requires human action.")
+        alerts.record_auth_failure("CAPTCHA requires human action.")
+
+        assert [event for event, _message in notifier.events] == ["auth_failure"]
+
+
+def test_auth_failure_realerts_when_the_reason_changes():
+    with alert_state_directory() as directory:
+        notifier = RecordingNotifier()
+        alerts = AlertStateMachine(directory / "alert-state.json", notifier)
+
+        alerts.record_auth_failure("automatic login is disabled.")
+        alerts.record_auth_failure("CAPTCHA requires human action.")
+
+        assert [message for _event, message in notifier.events] == [
+            "Bitget Tracker auth alert: automatic login is disabled.",
+            "Bitget Tracker auth alert: CAPTCHA requires human action.",
+        ]
+
+
+def test_auth_recovery_resets_the_reason_so_the_next_incident_alerts():
+    with alert_state_directory() as directory:
+        notifier = RecordingNotifier()
+        alerts = AlertStateMachine(directory / "alert-state.json", notifier)
+
+        alerts.record_auth_failure("CAPTCHA requires human action.")
+        alerts.record_auth_success()
+        alerts.record_auth_failure("CAPTCHA requires human action.")
+
+        events = [event for event, _message in notifier.events]
+
+        assert events == ["auth_failure", "auth_recovery", "auth_failure"]
