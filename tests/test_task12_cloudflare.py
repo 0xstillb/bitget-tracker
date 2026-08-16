@@ -26,8 +26,16 @@ def _application():
 def test_every_viewer_response_has_no_store_and_browser_security_headers():
     directory, application = _application()
     try:
+        # The dashboard page needs inline scripts, so it keeps no-store but
+        # drops the strict CSP; every viewer-owned/asset route keeps the full
+        # security header set.
+        status, dashboard_headers, _body = application.response("GET", "/")
+        assert status == 200
+        assert dashboard_headers["Cache-Control"] == "no-store, max-age=0"
+        assert "Content-Security-Policy" not in dashboard_headers
+
         for method, route in (
-            ("GET", "/"),
+            ("GET", "/assets/pi-viewer.css"),
             ("GET", "/api/v1/summary"),
             ("GET", "/missing"),
             ("POST", "/api/v1/summary"),

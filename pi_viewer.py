@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.parse import parse_qs, urlsplit
 
@@ -18,6 +19,10 @@ _SECRET_MARKERS = (
     "api_key", "authorization", "cookie", "credential", "local_storage",
     "passphrase", "password", "secret", "token",
 )
+
+# The viewer now serves the real dashboard (static/index.html + journal.html)
+# and proxies every other /api/* and /internal/* route to Core.
+STATIC_DIR = Path(os.environ.get("PI_VIEWER_STATIC_DIR", "static"))
 
 
 DASHBOARD_HTML = """<!doctype html>
@@ -190,6 +195,31 @@ class CoreSnapshotClient:
             raise ValueError("Core returned an invalid status")
         return _sanitize(status)
 
+    def proxy(self, method: str, path: str, body: bytes = b"",
+              content_type: str = "application/json") -> tuple[int, str]:
+        """Forward a dashboard API call to Core so the viewer page matches Core's.
+
+        /internal/* gets the Pi's internal token (never exposed to the
+        browser); /api/* passes through unchanged so Core's own write-token
+        enforcement still applies.
+        """
+        if not self.url:
+            return 503, json.dumps({"detail": "Core URL is not configured"})
+        base = self.url.rsplit("/internal/v1/snapshot", 1)[0]
+        headers = {"Accept": "application/json"}
+        if path.startswith("/internal/"):
+            headers["X-Internal-Token"] = self.token
+        if body:
+            headers["Content-Type"] = content_type
+        request = Request(base + path, data=body or None, headers=headers, method=method)
+        try:
+            with build_opener(_NoRedirectHandler).open(request, timeout=self.timeout) as response:
+                return response.status, response.read().decode("utf-8", errors="replace")
+        except HTTPError as error:
+            return error.code, error.read().decode("utf-8", errors="replace")
+        except Exception:
+            return 502, json.dumps({"detail": "Core proxy unavailable"})
+
 
 class PiViewer:
     """Refresh Core data with bounded exponential backoff while serving cache."""
@@ -300,7 +330,7 @@ class PiViewer:
 
 
 class ViewerApplication:
-    """Route the intentionally small GET-only HTTP surface."""
+    """Serve the real dashboard and proxy the rest of Core's API surface."""
 
     SECURITY_HEADERS = {
         "Cache-Control": "no-store, max-age=0",
@@ -315,20 +345,59 @@ class ViewerApplication:
         "X-Frame-Options": "DENY",
     }
 
-    def __init__(self, viewer: PiViewer):
+    # Routes answered from the viewer's local cache/assets keep the strict
+    # headers; the dashboard page itself needs inline scripts and is served
+    # exactly as Core serves it.
+    VIEWER_LOCAL_ROUTES = frozenset({
+        "/api/v1/summary", "/api/v1/health", "/api/v1/auth",
+        "/api/esp32", "/api/esp32/positions", "/api/esp32/history",
+    })
+
+    def __init__(self, viewer: PiViewer, static_dir: Path | str | None = None):
         self.viewer = viewer
+        self.static_dir = Path(static_dir) if static_dir is not None else STATIC_DIR
 
-    def response(self, method: str, path: str) -> tuple[int, dict[str, str], str]:
-        status, headers, body = self._route_response(method, path)
-        return status, {**headers, **self.SECURITY_HEADERS}, body
+    def response(self, method: str, path: str, body: bytes = b"") -> tuple[int, dict[str, str], str]:
+        status, headers, text = self._route_response(method, path, body)
+        route = urlsplit(path).path
+        # Only the dashboard pages are exempt: they need inline scripts, so the
+        # strict CSP would break them. Everything else keeps the header set.
+        if route not in ("/", "/index.html", "/journal.html"):
+            headers = {**headers, **self.SECURITY_HEADERS}
+        return status, headers, text
 
-    def _route_response(self, method: str, path: str) -> tuple[int, dict[str, str], str]:
-        if method != "GET":
-            return 405, {"Allow": "GET", "Content-Type": "application/json"}, json.dumps({"detail": "GET only"})
+    def _dashboard_page(self, name: str) -> tuple[int, dict[str, str], str]:
+        page = self.static_dir / name
+        try:
+            return 200, {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store, max-age=0",
+            }, page.read_text(encoding="utf-8")
+        except OSError:
+            return 503, {"Content-Type": "application/json"}, json.dumps(
+                {"detail": f"static/{name} is not available on this deployment"})
+
+    def _proxy_request(self, method: str, path: str, body: bytes) -> tuple[int, dict[str, str], str]:
+        proxy = getattr(self.viewer.client, "proxy", None)
+        if proxy is None:
+            return 501, {"Content-Type": "application/json"}, json.dumps(
+                {"detail": "Core proxy is not configured"})
+        status, text = proxy(method, path, body)
+        return status, {"Content-Type": "application/json"}, text
+
+    def _route_response(self, method: str, path: str, body: bytes = b"") -> tuple[int, dict[str, str], str]:
         parsed = urlsplit(path)
         route = parsed.path
-        if route == "/":
-            return 200, {"Content-Type": "text/html; charset=utf-8"}, DASHBOARD_HTML
+        if route in ("/", "/index.html"):
+            return self._dashboard_page("index.html")
+        if route == "/journal.html":
+            return self._dashboard_page("journal.html")
+        if (route.startswith(("/api/", "/internal/"))
+                and route not in self.VIEWER_LOCAL_ROUTES):
+            proxy_path = route + (f"?{parsed.query}" if parsed.query else "")
+            return self._proxy_request(method, proxy_path, body)
+        if method != "GET":
+            return 405, {"Allow": "GET", "Content-Type": "application/json"}, json.dumps({"detail": "GET only"})
         if route == "/assets/pi-viewer.css":
             return 200, {"Content-Type": "text/css; charset=utf-8"}, DASHBOARD_CSS
         if route == "/assets/pi-viewer.js":
@@ -368,8 +437,13 @@ class ViewerApplication:
 def make_handler(application: ViewerApplication):
     class Handler(BaseHTTPRequestHandler):
         def _respond(self, method: str) -> None:
-            status, headers, body = application.response(method, self.path)
-            encoded = body.encode("utf-8")
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            body = self.rfile.read(length) if length else b""
+            status, headers, body_text = application.response(method, self.path, body)
+            encoded = body_text.encode("utf-8")
             self.send_response(status)
             for name, value in headers.items():
                 self.send_header(name, value)

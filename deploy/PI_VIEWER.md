@@ -2,18 +2,21 @@
 
 Use `INSTALL_PI.md` for the complete first-install and upgrade procedure.
 
-The Pi runs only `pi_viewer.py`: a GET-only LAN service that fetches the Core
-snapshot through Tailscale, keeps an atomic local cache, and serves cached data
-when the Core is unavailable. It does not run Chromium, Playwright, or Bitget
-login flows.
+The Pi runs `pi_viewer.py`: a LAN service that fetches the Core snapshot
+through Tailscale, keeps an atomic local cache, and **serves the real
+dashboard** (`static/index.html` + `static/journal.html`). Every other
+`/api/*` and `/internal/*` route is proxied to Core, so the Viewer page is
+identical to the Core dashboard — including Polling Setup and cookie paste
+(writes still require the dashboard write token). It does not run Chromium,
+Playwright, or Bitget login flows.
 
 Copy `pi-viewer.env.example` to `/etc/bitget-pi-viewer/viewer.env`, replace the
 Tailscale address and token, set mode `0600`, then install the systemd unit.
 Create `/var/lib/bitget-pi-viewer` owned by `bitget-viewer` first.
 
-The native viewer routes are GET-only: `/`, `/api/v1/summary`, and
-`/api/v1/health`. For CYD compatibility, the same cache also serves GET-only
-`/api/esp32`, `/api/esp32/positions`, and `/api/esp32/history`.
+The native viewer cache routes stay available for CYD/ESP32 compatibility:
+`/api/v1/summary`, `/api/esp32`, `/api/esp32/positions`, and
+`/api/esp32/history` (GET-only, served from the local cache).
 The `/` route is a responsive, installable web app for Android Chrome. Use the
 browser menu **Install app** or **Add to Home screen**. It is not a native
 Android widget; it renders only the Viewer cache through `/api/v1/summary` and

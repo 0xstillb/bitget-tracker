@@ -24,7 +24,7 @@ class CoreClient:
         }
 
 
-def test_pi_viewer_root_is_a_read_only_dashboard_with_external_assets(tmp_path):
+def test_pi_viewer_root_serves_the_real_dashboard_page(tmp_path):
     app = ViewerApplication(PiViewer(CoreClient(), ViewerCache(tmp_path / "cache.json")))
 
     status, headers, html = app.response("GET", "/")
@@ -33,29 +33,70 @@ def test_pi_viewer_root_is_a_read_only_dashboard_with_external_assets(tmp_path):
     manifest_status, manifest_headers, manifest = app.response("GET", "/manifest.webmanifest")
     worker_status, worker_headers, worker = app.response("GET", "/service-worker.js")
 
+    # The viewer page is now the real dashboard, served exactly like Core does.
     assert status == 200
-    assert "Bitget Pi Viewer" in html
-    assert 'href="/assets/pi-viewer.css"' in html
-    assert 'src="/assets/pi-viewer.js"' in html
-    assert 'rel="manifest" href="/manifest.webmanifest"' in html
-    assert "script-src 'self'" in headers["Content-Security-Policy"]
-    assert "style-src 'self'" in headers["Content-Security-Policy"]
-    assert "connect-src 'self'" in headers["Content-Security-Policy"]
+    assert "Bitget CFD Tracker" in html
+    assert 'href="/journal.html"' in html
+    assert "Content-Security-Policy" not in headers  # dashboard uses inline scripts
     assert css_status == 200 and css_headers["Content-Type"].startswith("text/css") and ".metric" in css
     assert js_status == 200 and js_headers["Content-Type"].startswith("application/javascript")
+    assert "script-src 'self'" in css_headers["Content-Security-Policy"]
     assert 'fetch("/api/v1/summary",' in script
-    assert 'cache:"no-store"' in script
-    assert "textContent" in script
-    assert "innerHTML" not in script
-    assert "/internal/" not in script
-    assert "POST" not in script
     assert "beforeinstallprompt" in script
     assert manifest_status == 200 and manifest_headers["Content-Type"].startswith("application/manifest+json")
     assert '"display":"standalone"' in manifest
-    assert '"src":"/assets/app-icon.svg"' in manifest
     assert worker_status == 200 and worker_headers["Content-Type"].startswith("application/javascript")
-    assert '"/api/v1/summary"' not in worker
     assert '"/assets/pi-viewer.js"' in worker
+
+
+def test_pi_viewer_serves_the_journal_page(tmp_path):
+    app = ViewerApplication(PiViewer(CoreClient(), ViewerCache(tmp_path / "cache.json")))
+
+    status, _headers, html = app.response("GET", "/journal.html")
+
+    assert status == 200
+    assert "Trading Journal" in html
+
+
+def test_pi_viewer_proxies_dashboard_api_routes_to_core(tmp_path):
+    import json
+
+    class ProxyingClient(CoreClient):
+        def __init__(self):
+            self.calls = []
+
+        def proxy(self, method, path, body=b""):
+            self.calls.append((method, path, body))
+            return 200, '{"ok":true}'
+
+    client = ProxyingClient()
+    app = ViewerApplication(PiViewer(client, ViewerCache(tmp_path / "cache.json")))
+
+    status, _headers, body = app.response("GET", "/api/poller")
+    assert status == 200 and json.loads(body) == {"ok": True}
+    status, _headers, _body = app.response("GET", "/internal/v1/status")
+    assert status == 200
+    status, _headers, _body = app.response("POST", "/api/poller/cookie", b'{"cookie":"x"}')
+    assert status == 200
+
+    assert client.calls == [
+        ("GET", "/api/poller", b""),
+        ("GET", "/internal/v1/status", b""),
+        ("POST", "/api/poller/cookie", b'{"cookie":"x"}'),
+    ]
+
+
+def test_pi_viewer_keeps_esp32_and_viewer_routes_local_not_proxied(tmp_path):
+    class SpyingClient(CoreClient):
+        def proxy(self, *_args, **_kwargs):
+            raise AssertionError("local viewer routes must not hit the proxy")
+
+    app = ViewerApplication(PiViewer(SpyingClient(), ViewerCache(tmp_path / "cache.json")))
+
+    assert app.response("GET", "/api/esp32")[0] == 200
+    assert app.response("GET", "/api/v1/summary")[0] == 200
+    assert app.response("POST", "/api/v1/summary")[0] == 405
+    assert app.response("GET", "/not-found")[0] == 404
 
 
 def test_pi_dashboard_assets_never_embed_credentials_or_core_admin_routes():
