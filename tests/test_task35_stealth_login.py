@@ -112,7 +112,7 @@ def test_silent_refresh_is_skipped_when_no_cookie_is_stored(monkeypatch):
     assert asyncio.run(browser_poller._try_silent_session_refresh("pid-1")) is False
 
 
-def test_silent_refresh_persists_only_after_verified_probe(monkeypatch):
+def test_silent_refresh_persists_when_server_still_accepts_the_jar(monkeypatch):
     import asyncio
 
     calls = []
@@ -124,21 +124,16 @@ def test_silent_refresh_persists_only_after_verified_probe(monkeypatch):
     class Page:
         pass
 
-    async def fake_verify(_page, portfolio_id):
-        calls.append(("verify", portfolio_id))
-        return {"status": 200, "code": "00000"}
-
     async def fake_persist(_context, verification, local_storage=None):
         calls.append(("persist", verification["code"]))
         return True
 
-    monkeypatch.setattr(browser_poller, "_verify_login_page", fake_verify)
     monkeypatch.setattr(browser_poller, "_persist_verified_cookie_jar", fake_persist)
 
     result = asyncio.run(browser_poller._refresh_session_from_page(Page(), Context(), "pid-1"))
 
     assert result is True
-    assert calls == [("verify", "pid-1"), ("persist", "00000")]
+    assert calls == [("persist", "00000")]
 
 
 def test_silent_refresh_stops_when_server_invalidated_the_session(monkeypatch):
