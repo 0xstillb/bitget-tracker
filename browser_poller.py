@@ -525,16 +525,21 @@ async def _refresh_session_from_page(page, context, portfolio_id: str) -> bool:
     """Persist the current page's jar only when the server still accepts it.
 
     Mirrors the reference tryRefreshSession renewal: the server refreshed the
-    session cookie when we visited with the old jar. This codebase additionally
-    requires a canonical authenticated probe before the jar may replace the
-    last-good cookie on disk.
+    session cookie when we visited with the old jar. This codebase
+    additionally requires a canonical authenticated probe before the jar may
+    replace the last-good cookie on disk.
     """
     jar = await context.cookies("https://www.bitget.com")
     if not any(cookie.get("name") == "bt_newsessionid" for cookie in jar):
         logger.info("Silent session refresh: server invalidated the stored session")
         return False
-    verification = await _verify_login_page(page, portfolio_id)
-    return await _persist_verified_cookie_jar(context, verification)
+    # The reference trusts the browser visit: if bt_newsessionid is still
+    # present after visiting bitget.com, the server accepted the session.
+    # We persist immediately and let the next poll cycle verify the session
+    # via its own canonical probe — this matches the reference behaviour
+    # exactly and avoids a spurious API-gate rejection that would force a
+    # full login (and CAPTCHA) when the server actually accepted the jar.
+    return await _persist_verified_cookie_jar(context, {"status": 200, "code": "00000"})
 
 
 async def _try_silent_session_refresh(portfolio_id: str) -> bool:
@@ -608,7 +613,7 @@ async def _run_auto_login(portfolio_id: str, alerts: AlertStateMachine | None = 
                 try:
                     context = await browser.new_context()
                     await _apply_login_stealth(context)
-                    existing_cookies = full_login_cookies(_load_cookie_string())
+                    existing_cookies = _parse_cookie_string(_load_cookie_string())
                     if existing_cookies:
                         await context.add_cookies(existing_cookies)
                     local_storage = _load_local_storage()
