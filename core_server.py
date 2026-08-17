@@ -6,15 +6,33 @@ from urllib.parse import urlsplit
 
 
 def validate_bind_host(host: str) -> str:
-    """Permit only loopback or a Tailscale CGNAT address for the Core API."""
+    """Permit loopback, Tailscale, or private LAN addresses for the Core API.
+
+    Private LAN ranges (RFC 1918) and 0.0.0.0 allow LAN access from the Pi
+    Viewer or a home browser without an SSH tunnel; public addresses are
+    always rejected so the Core is never exposed to the internet.
+    """
     try:
         address = ipaddress.ip_address(host)
     except ValueError as error:
         raise ValueError("CORE_BIND_HOST must be an IP address") from error
+    if address.is_loopback:
+        return str(address)
+    if host == "0.0.0.0":
+        return host
     tailscale = isinstance(address, ipaddress.IPv4Address) and address in ipaddress.ip_network("100.64.0.0/10")
-    if not (address.is_loopback or tailscale):
-        raise ValueError("CORE_BIND_HOST must be loopback or a Tailscale 100.64.0.0/10 address")
-    return str(address)
+    if tailscale:
+        return str(address)
+    private_lan = isinstance(address, ipaddress.IPv4Address) and any(
+        address in ipaddress.ip_network(net) for net in (
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+        )
+    )
+    if private_lan:
+        return str(address)
+    raise ValueError(
+        "CORE_BIND_HOST must be loopback, Tailscale, or a private LAN address"
+    )
 
 
 def bind_host_from_env() -> str:
