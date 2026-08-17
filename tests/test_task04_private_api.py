@@ -47,13 +47,14 @@ def test_cors_has_no_wildcards():
     assert "*" not in cors.kwargs["allow_headers"]
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "100.64.0.10"])
-def test_private_bind_accepts_loopback_or_tailscale_addresses(host):
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "100.64.0.10",
+                                  "0.0.0.0", "192.168.1.10", "10.0.0.1"])
+def test_private_bind_accepts_loopback_tailscale_or_lan(host):
     assert validate_bind_host(host) == host
 
 
-@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.10"])
-def test_private_bind_rejects_public_or_lan_addresses(host):
+@pytest.mark.parametrize("host", ["::", "8.8.8.8", "1.2.3.4"])
+def test_private_bind_rejects_public_or_unspecified_ipv6(host):
     with pytest.raises(ValueError):
         validate_bind_host(host)
 

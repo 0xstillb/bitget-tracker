@@ -7,6 +7,8 @@
 set -e
 
 if [ "${BITGET_HEADFUL:-true}" = "true" ] && [ -z "${DISPLAY:-}" ]; then
+    # Clean up stale Xvfb state from a previous container restart.
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
     Xvfb :99 -screen 0 1280x720x24 -nolisten tcp -ac &
     XVFB_PID=$!
     export DISPLAY=:99
