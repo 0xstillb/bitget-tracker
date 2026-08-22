@@ -480,13 +480,25 @@ def make_handler(application: ViewerApplication):
     return Handler
 
 
+def _refresh_interval_from_env() -> float:
+    """Read a safe Viewer refresh cadence without risking a busy loop."""
+    try:
+        return max(1.0, float(os.environ.get("PI_VIEWER_REFRESH_INTERVAL_SEC", "3")))
+    except ValueError:
+        return 3.0
+
+
 def run_from_env() -> None:
     client = CoreSnapshotClient(
         os.environ.get("CORE_SNAPSHOT_URL", ""),
         os.environ.get("INTERNAL_API_TOKEN", ""),
         timeout=float(os.environ.get("CORE_SNAPSHOT_TIMEOUT_SEC", "5")),
     )
-    viewer = PiViewer(client, ViewerCache(Path(os.environ.get("PI_VIEWER_CACHE_PATH", "viewer-cache.json"))))
+    viewer = PiViewer(
+        client,
+        ViewerCache(Path(os.environ.get("PI_VIEWER_CACHE_PATH", "viewer-cache.json"))),
+        refresh_interval=_refresh_interval_from_env(),
+    )
     application = ViewerApplication(viewer)
 
     def refresh_loop() -> None:

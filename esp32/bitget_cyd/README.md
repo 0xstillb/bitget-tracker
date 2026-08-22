@@ -10,6 +10,13 @@ The device calls only the Pi LAN Viewer `GET /api/esp32`; it never contacts
 Bitget or the VPS Core. Wi-Fi credentials are entered over the physical USB
 serial connection and stored in ESP32 NVS. They are not compiled into the
 firmware. Never commit Wi-Fi credentials to the repository.
+It pulls the small cached payload every 3 seconds; touching the display also
+refreshes it immediately.
+
+For the matching Pi cadence, set `PI_VIEWER_REFRESH_INTERVAL_SEC=3` in
+`/etc/bitget-pi-viewer/viewer.env` and restart `bitget-pi-viewer`. This only
+reduces display/cache latency: changes cannot appear until the Core has received
+new upstream data.
 
 Arduino libraries: ESP32 board package, ArduinoJson 7, TFT_eSPI,
 XPT2046_Touchscreen, and LVGL 8.3.x. `lv_init()` is retained for compatibility

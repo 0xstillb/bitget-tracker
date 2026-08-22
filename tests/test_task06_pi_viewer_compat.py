@@ -2,7 +2,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from pi_viewer import PiViewer, ViewerApplication, ViewerCache
+from pi_viewer import PiViewer, ViewerApplication, ViewerCache, _refresh_interval_from_env
 
 
 class CoreClient:
@@ -57,3 +57,11 @@ def test_pi_viewer_documentation_scopes_esp32_to_cached_get_routes():
 
     assert "/api/esp32" in documentation
     assert "GET-only" in documentation
+
+
+def test_pi_viewer_refresh_interval_defaults_to_three_seconds_and_has_a_safe_floor(monkeypatch):
+    monkeypatch.delenv("PI_VIEWER_REFRESH_INTERVAL_SEC", raising=False)
+    assert _refresh_interval_from_env() == 3.0
+
+    monkeypatch.setenv("PI_VIEWER_REFRESH_INTERVAL_SEC", "0")
+    assert _refresh_interval_from_env() == 1.0

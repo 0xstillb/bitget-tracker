@@ -24,6 +24,7 @@ def test_cyd_ui_fetches_compact_pi_payloads_and_keeps_last_values():
     assert '"/api/v1/auth"' in source
     assert "lastOpenPositionCount" in source
     assert "if (!payload[\"ok\"].as<bool>()) return false;" in source
+    assert "FETCH_INTERVAL_MS = 3000" in source
 
 
 def test_cyd_ui_has_mockup_style_status_pnl_equity_and_compact_position_layout():

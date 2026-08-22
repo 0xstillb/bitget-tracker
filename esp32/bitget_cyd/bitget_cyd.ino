@@ -12,7 +12,7 @@
 
 static const uint16_t SCREEN_WIDTH = 320;
 static const uint16_t SCREEN_HEIGHT = 240;
-static const uint32_t FETCH_INTERVAL_MS = 30000;
+static const uint32_t FETCH_INTERVAL_MS = 3000;
 static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
 static const uint32_t TOUCH_DEBOUNCE_MS = 600;
 static const uint32_t USB_PROVISIONING_WINDOW_MS = 120000;
@@ -28,6 +28,9 @@ static const uint16_t COLOR_MUTED = 0x9CF3;
 static const uint16_t COLOR_POSITIVE = 0x34E8;
 static const uint16_t COLOR_NEGATIVE = 0xF967;
 static const uint16_t COLOR_WARNING = 0xFD20;
+// The Pi Viewer serves a compact cached payload, so a short pull cadence is
+// inexpensive and keeps open P&L feeling live.  The upstream Core must also
+// receive fresh data for a changed value to appear here.
 
 #define XPT2046_IRQ 36
 #define XPT2046_MOSI 32
