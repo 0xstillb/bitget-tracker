@@ -382,11 +382,12 @@ void setup() {
   Serial.println("{\"ready\":true,\"protocol\":\"usb-provisioning-v1\"}");
   lv_init();  // Retain compatibility with existing CYD LVGL deployments.
   tft.init();
-  tft.setRotation(1);
+  // 3 is landscape rotated 180 degrees from the current mounting orientation.
+  tft.setRotation(3);
   tft.setSwapBytes(true);
   touchSPI.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
   touch.begin(touchSPI);
-  touch.setRotation(1);
+  touch.setRotation(3);
   loadConfiguration();
   connectWifi();
   drawDashboardChrome();

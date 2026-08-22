@@ -11,7 +11,7 @@ def test_cyd_firmware_keeps_the_required_hardware_stack_and_landscape_geometry()
         assert include in source
     assert "SCREEN_WIDTH = 320" in source
     assert "SCREEN_HEIGHT = 240" in source
-    assert "tft.setRotation(1)" in source
+    assert "tft.setRotation(3)" in source
 
 
 def test_cyd_ui_fetches_compact_pi_payloads_and_keeps_last_values():
