@@ -17,6 +17,12 @@ tier) the login falls back to a headless browser with a warning; a headless
 browser is more likely to hit Bitget's CAPTCHA, which is exactly why the Pi
 runs headful.
 
+Core starts this flow only after Bitget confirms the session has expired (for
+example its `00004` response code), not merely after a transient request
+failure. This avoids repeatedly creating device-approval prompts during an
+outage. Current balance and positions are fetched before any first-run history
+backfill, so a large 90-day history cannot hold up the live dashboard update.
+
 ## Core environment
 
 Add these values to the Pi-only Core env file. Keep the file mode `0600` and

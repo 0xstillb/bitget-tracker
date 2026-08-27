@@ -10,6 +10,7 @@ import browser_poller
     [
         ({"status": 200, "code": "00000", "msg": "success"}, "valid"),
         ({"status": 200, "code": "00004", "msg": "session expired"}, "expired"),
+        ({"status": 200, "code": "00004", "msg": "request failed"}, "expired"),
         ({"status": 302, "code": None}, "expired"),
         ({"status": 200, "error": "html_redirect"}, "expired"),
         ({"status": 429, "code": None}, "transient"),

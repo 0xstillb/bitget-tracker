@@ -81,6 +81,11 @@ _AUTO_LOGIN_LOCK = asyncio.Lock()
 _AUTO_LOGIN_NEXT_ATTEMPT = 0.0
 
 _SESSION_SUCCESS_CODES = {"00000", "0", "200"}
+# Bitget uses 00004 for an expired follower session.  Some responses contain a
+# generic/localised message instead of the word "expired", so the code itself
+# must take precedence when deciding whether to start the human-approved login
+# flow.
+_SESSION_EXPIRED_CODES = {"00004"}
 _SESSION_EXPIRED_MARKERS = ("expired", "login", "log in", "sign in")
 _FULL_LOGIN_AUTH_COOKIE_NAMES = frozenset({"bt_newsessionid", "bt_sessonid", "bt_uid"})
 
@@ -230,6 +235,8 @@ def classify_session_response(response: dict | BaseException) -> str:
     if (isinstance(status, int) and 300 <= status < 400) or "redirect" in error:
         return "expired"
     if "html" in error or body.startswith("<!doctype html") or body.startswith("<html"):
+        return "expired"
+    if str(response.get("code")) in _SESSION_EXPIRED_CODES:
         return "expired"
     if any(marker in f"{msg} {error}" for marker in _SESSION_EXPIRED_MARKERS):
         return "expired"
@@ -891,8 +898,11 @@ async def _poll_once(push_fn: Callable, cookie_str: str,
                     except Exception as e:
                         logger.info("Warm-up nav %s: %s", path, e)
 
-            await _active_poll(page, push_fn, traders, trader_types)
+            # Current portfolio values are what the dashboard and ESP32 need
+            # immediately.  A first-run 90-day history backfill can involve
+            # hundreds of requests, so never make it delay this live update.
             await _fetch_balance(page, push_fn, traders, trader_types)
+            await _active_poll(page, push_fn, traders, trader_types)
 
             # Renew expiring cookies while the authenticated Playwright session
             # is still valid. The replacement is verified before it can replace
